@@ -118,8 +118,10 @@ int BAT_PERIOD = 10;    // Interval pour envoi de l'état de la batterie (en sec
 //#define POWER_PIN 25
 //#define IND_PIN   36
 // BAT
-#include <esp_adc_cal.h>
-//#define ADC_PIN     4
+//#include <esp_adc_cal.h>
+float lastBatPercent = 0.0;
+float lastBatVoltage = 0.0;
+#define BAT_ADC_PIN 35
 int vref = 1100;
 uint32_t timeStamp = 0;
 
@@ -255,6 +257,23 @@ WebServer server(80);
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
+float readBatteryPercent() {
+  uint16_t adcRaw = analogRead(BAT_ADC_PIN);
+  // Ajuste le facteur en fonction de ton diviseur de tension
+  float voltage = ((float)adcRaw / 4095.0) * 3.3;  // 12 bits ADC, Vref 3.3 V
+
+  // Si diviseur, par exemple 100k/100k (x2) : voltage *= 2;
+  voltage *= 2.0;
+lastBatVoltage = voltage;
+  // Bornes typiques LiPo
+  float percent = (voltage - 3.0) / (4.2 - 3.0) * 100.0;
+  if (percent < 0) percent = 0;
+  if (percent > 100) percent = 100;
+  lastBatPercent = percent;
+  return percent;
+}
+
+
 //=-=-=-=-=-=-=-=-=-=-=-=SOUS FUNCTION =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 void loadPreferences() {
   prefs.begin("ntripcfg", true); // lecture seule
@@ -293,6 +312,9 @@ void parseRTCMMessage(uint8_t *msg, uint16_t length) {
 
 // Page HTML
 void handleRoot() {
+  String batHtml = "<p>Batterie : ";
+  batHtml += String(lastBatPercent, 1) + "% (" + String(lastBatVoltage, 2) + "V)</p>";
+
   server.send(200, "text/html", R"rawliteral(
     <html>
       <head>
@@ -314,6 +336,7 @@ void handleRoot() {
       </head>
       <body>
         <p><a href="/config">configuration du rover</a></p>
+        )rawliteral" + batHtml + R"rawliteral(
         <h1>Etat GNSS RTK  -  RTCM </h1>
         <h2>Caster Connection: </h2>
         <p>Serveur : 
@@ -727,6 +750,11 @@ void setup()
 void loop()
 {
   server.handleClient();    // ecoute sur les entre WEB
+  static unsigned long lastBatRead = 0;
+  if (millis() - lastBatRead > 5000) {
+    readBatteryPercent();
+    lastBatRead = millis();
+  }
   static bool ggaOk = false;
   // =-=-=-=-= GNSS READ STATE =-=-=-=-=
   if (GNSSSerial.available()) // Check for a new key press
