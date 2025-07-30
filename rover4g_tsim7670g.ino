@@ -1,285 +1,628 @@
-// =============================================================================
-// CONFIGURATION DU MODELE - Decommenter UNE SEULE ligne
-// =============================================================================
-#define MODEL_A7670G    // Pour LilyGO T-A7670G avec GPS externe. https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
+// base du code : Julien ANCELIN
+// Select your modem:
+//#define TINY_GSM_MODEM_SIM7600
+#define TINY_GSM_MODEM_A7670
 
-// =============================================================================
-// CONFIGURATION AUTOMATIQUE SELON LE MODELE
-// =============================================================================
-#ifdef MODEL_A7670G
-  #define TINY_GSM_MODEM_A7670
-  #define USE_EXTERNAL_GPS 1
-  #define BOARD_NAME "TSIM_A7670G"
-#elif defined(MODEL_A7670E)
-  #define TINY_GSM_MODEM_A7670
-  #define USE_EXTERNAL_GPS 1
-  #define BOARD_NAME "TSIM_A7670E"
-#else
-  #error "Aucun modele selectionne! Decommenter un #define MODEL_xxx"
-#endif
+bool debuggprint = true;
 
-#ifndef NTRIP_CLIENT_H
-#define NTRIP_CLIENT_H
+//RTK connection
+String webCaster = "crtk.net";
+uint16_t webPort = 2101;
+String webMount = "NEAR";
+String webUser = "centipede";
+String webPW = "centipede";
+String webSSID = "Freebox-A58F2A";
+String webSSIDPW = "obpugnati&";
+String webAPN    = "sl2sfr";
+String webSIMPASS = "";
+String webSIMUSER = "";
+const bool transmitLocation = true; //Send gga to caster
+unsigned long lastGGA = 0;
+unsigned long timeSendGGA = 10000;
 
-#include "TinyGsmClient.h"
 
-class NTRIPClient {
-  public:
-    NTRIPClient(TinyGsmClient &client);
+String ggaDefaut = "";  // HNVCAD position GGA
 
-    bool reqSrcTbl(char *host, int &port);
-    bool reqRaw(char *host, int &port, char *mntpnt, char *user, char *psw);
-    void stop();
-    int available();
-    int read();  // ⚠️ Ici on met bien int
-    int readLine(char *buffer, int maxlen);
-    void sendGGA(const String &gga);
-    
-  private:
-    TinyGsmClient *_client;
+//String ggaDefaut = "$GNGGA,131133.706,4907.407,N,00393.600,E,1,12,1.0,0.0,M,0.0,M,,*62";  // base LRSEC vers vivaise tri bandes
+
+// Décodeur simple de trames RTCM 3.x avec compteur de type ID
+#define MAX_IDS 50
+struct RTCM_ID_Counter {
+  uint16_t id;
+  uint32_t count;
 };
+RTCM_ID_Counter idCounters[MAX_IDS];
+unsigned long lastDisplay = 0;
+unsigned long timeStateCaster = 0;
+unsigned long durationData = 0;
+float secondsData = 0.0;
+float kbData = 0.00;
+float kbpsData = 0.00;
+String signalRSSI = "0";
+unsigned long countRtcm = 0;
+// Mesure du temps de téléchargement
+unsigned long startData = 0;
+unsigned long totalData = 0;
 
+// unsigned long rtcmCount = 0;
+// unsigned long id1004Count = 0;
+// char rtcmBuffer[1024];
+//unsigned long rtcmTimeOut = 15000;
+
+// GNSS acquisition Frequency ( Hz )
+int GNSS_FREQ = 1;
+
+// DEEP SLEEP CONFIGURATION
+RTC_DATA_ATTR int bootCount = 0;    // Compte le nombre de reboot. 
+int nb_DeepSleep_until_Reboot = 10; // nb de deepsleep avant reboot complet.
+bool DEEP_SLEEP_ACTIVATED = false; //true;     // True = DeepSleep sinon DeepSleep ( off ) captation en continue
+int TIME_TO_SLEEP = 5; //480 // temps de repos en deepsleep.
+int RTK_ACQUISITION_PERIOD = 30; //120; // Temps ( en seconde ) pendant lequel on doit capter de la donnée en RTK ( secondes )
+int RTK_MAX_RESEARCH = 30;//120; // Temps max pendant lequel le dispositif recherche du RTK ( secondes )
+#define uS_TO_S_FACTOR 1000000
+RTC_DATA_ATTR int lastPeriodRecord = 0;
+int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va chercher le network 4G avant de faire un deepsleep( TIME_TO_SLEEP )
+int ACQUISION_PERIOD_MQTT = 30000; // Temps d'acquisition pendant lequel on va chercher le serveur mqtt
+int ACQUISION_PERIOD_GNSS = 30000; // Temps d'acquisition pendant lequel on va chercher le serveur mqtt
+
+// BAT
+int BAT_PERIOD = 10;    // Interval pour envoi de l'état de la batterie (en seconde )
+
+
+/*
+=============================================================================================
+* By: HnV CAD / Herve JOLIVET 
+  Date: June 17th, 2025
+  License: MIT.
+
+* Souce: https://github.com/jancelin/physalia
+* By: INRAE / Julien Ancelin & Romain Tourte, Quentin Lesniack
+* License: GNU Affero General Public License v3.0
+
+* Object: 
+  - Connect to 4g LTE network and get RTCM data from CentipedeRTK caster as a Client with web interface control / compteur 
+  - Transmit Lat long positions to the caster for base selection automatique
+
+* Material:
+  - ESP32 with Pcie + RJ45: Lilygo T-pcie  =-=-= INFO : LILYGO ® Carte Bluetooth Wifi TTGO T-Internet-COM ESP32 pour Module IOT Ethernet T-PCIE avec emplacement pour carte SIM TF connecteur type-c    
+      https://fr.aliexpress.com/item/1005003547423153.html?spm=a2g0o.order_detail.order_detail_item.3.4eeb7d56Nkpwmr&gatewayAdapt=glo2fra
+  - LTE 4G: only SIM T-PCIE A7670E not GPS =-=-=  INFO : LILYGO® TTGO T-PCIE A7670 4G Carte de Développement ESP32-WROVER-B WIFI Bluetooth epiSeries Composable Tech A7670E A7670SA persévérance 101
+      https://www.tinytronics.nl/shop/en/communication-and-signals/wireless/gps/modules/lilygo-ttgo-t-pcie-sim7600g-h-expansion-module
+
+  - F9P: drotek DP0601                    https://store-drotek.com/891-rtk-zed-f9p-gnss.html
+  - relay: 5V 1-channel high-active       https://www.tinytronics.nl/shop/en/switches/relays/5v-relay-1-channel-high-active
+  - battery: Li-Po Battery 3.7V 2000mAh   https://www.tinytronics.nl/shop/en/power/batteries/li-po/li-po-accu-3.7v-2000mah
+  
+* GNSS code:
+  By: SparkFun Electronics / Nathan Seidle & Paul Clark
+  Date: January 13th, 2022
+  License: MIT.
+=============================================================================================
+*/
+#ifdef TINY_GSM_MODEM_SIM7600
+  // Configuration des broches pour modele original SIM7600
+  #define UART_BAUD 115200   // for modem only
+  #define MODEM_RX 26
+  #define MODEM_TX 27
+  #define MODEM_PWRKEY 4
+  #define MODEM_POWERON 25
+#elif defined(TINY_GSM_MODEM_A7670)
+  #define UART_BAUD 115200   // for modem only
+  #define PIN_RX       27
+  #define PIN_TX       26
+  #define MODEM_PWRKEY   4
+  #define MODEM_DTR      25
+  #define BOARD_POWERON  12
 #endif
+//#define LED_PIN   12
+//#define POWER_PIN 25
+//#define IND_PIN   36
+// BAT
+#include <esp_adc_cal.h>
+//#define ADC_PIN     4
+int vref = 1100;
+uint32_t timeStamp = 0;
+
+//GSM----------------------------
+// need enough space in the buffer for the entire response
+// else data will be lost (and the http library will fail).
+#define TINY_GSM_RX_BUFFER 1024
 
 #include <HardwareSerial.h>
+HardwareSerial SerialAT(1);  // UART1 - Modem
+HardwareSerial GNSSSerial(2);      // UART2 - GNSS
+
+#define GNSSBAUD 460800
+#define GNSS_TX    32 //=> vers RX LG580P
+#define GNSS_RX    34 // => vers TX LG580P
+
+// See all AT commands, if wanted
+//#define DUMP_AT_COMMANDS
+
+// Define the serial console for debug prints, if needed
+#define TINY_GSM_DEBUG Serial
+
+// Define how you're planning to connect to the internet.
+// This is only needed for this example, not in other code.
+#define TINY_GSM_USE_GPRS true
+#define TINY_GSM_USE_WIFI false
+
+// set GSM PIN, if any
+#define GSM_PIN ""
+// Your GPRS credentials, if any
+const char apn[]      = "sl2sfr";
+const char gprsUser[] = "";
+const char gprsPass[] = "";
+
+#include <TinyGsmClientfork.h>
+#include <WiFiUdp.h>
 #include <BluetoothSerial.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <WiFi.h>
-#include <WiFiUdp.h>
-#include <WebServer.h>
 #include <Preferences.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "esp_task_wdt.h"
+Preferences prefs;
 
-// =============================================================================
-// PINOUT SPECIFIQUE PAR MODELE
-// =============================================================================
-#ifdef MODEL_SIM7600
-  // Configuration des broches pour modele original SIM7600
-  #define MODEM_RX 26
-  #define MODEM_TX 27
-  #define MODEM_PWRKEY 4
-  #define MODEM_POWER 25
-  #define bauds 460800
-  #define GNSS_RX 33
-  #define GNSS_TX 32
-  #define MODE_PIN1 13
-  #define MODE_PIN2 15
-  #define CONFIG_PIN 14  // Pin pour forcer le mode configuration
-#elif defined(MODEL_A7670G)
-  // Configuration des broches pour LilyGO T-A7670G
-  #define MODEM_RX 27
-  #define MODEM_TX 26
-  #define MODEM_PWRKEY 4
-  #define MODEM_DTR 25
-  #define MODEM_RI 33
-  #define BOARD_POWERON 12
-  #define bauds 460800
-  #define GNSS_RX 34
-  #define GNSS_TX 35
-  #define MODE_PIN1 13
-  #define MODE_PIN2 15
-  #define CONFIG_PIN 14  // Pin pour forcer le mode configuration
-#elif defined(MODEL_A7670E)
-  // Configuration des broches pour LilyGO T-A7670E
-  #define MODEM_RX 27
-  #define MODEM_TX 26
-  #define MODEM_PWRKEY 4
-  #define MODEM_DTR 25
-  #define MODEM_RI 33
-  #define BOARD_POWERON 12
-  #define bauds 460800
-  #define GNSS_RX 34
-  #define GNSS_TX 35
-  #define MODE_PIN1 14
-  #define MODE_PIN2 15
-  #define CONFIG_PIN 13  // Pin pour forcer le mode configuration
-#endif
+#define MODE_UDP      0
+#define MODE_BT       1
+#define MODE_BLE      2
+#define PIN_MODE_0    14
+#define PIN_MODE_1    15
+int outputMode = MODE_UDP;
 
-// Configuration WiFi
-String wifi_ssid = "";      // Sera charge depuis les preferences
-String wifi_password = "";  // Sera charge depuis les preferences
-const char* udpAddress = "192.168.1.255";
-const int udpPort = 9999;
-
-// Point d'acces de configuration
-const char* ap_ssid = "rover-gnss-config";
-const char* ap_password = "12345678";
-WebServer server(80);
-Preferences preferences;
-bool configMode = false;
-
-// Configuration des buffers
-#define GNSS_BUFFER_SIZE 2048
-#define BT_BUFFER_SIZE 1024
-#define QUEUE_SIZE 50
-
-// Modes de communication
-enum CommMode {
-  MODE_BLUETOOTH = 0,
-  MODE_BLE = 1,
-  MODE_UDP = 2
-};
-
-volatile CommMode currentMode = MODE_UDP; // Par defaut, sera redefini au boot
-
-// Configuration du modem
-const char apn[] = "sl2sfr";
-const char user[] = "";
-const char pass[] = "";
-
-// Variables pour la configuration NTRIP configurables
-String ntrip_host = "crtk.net";       // Adresse du caster par defaut
-int ntrip_port = 2101;                // Port par defaut
-String ntrip_mountpoint = "LRSEC";    // Valeur par defaut
-String ntrip_user = "centipede";      // Valeur par defaut
-String ntrip_pass = "centipede";      // Valeur par defaut
-
-// Buffers char pour la compatibilite avec NTRIPClient
-char ntrip_host_buf[128];
-char ntrip_mountpoint_buf[64];
-char ntrip_user_buf[64];
-char ntrip_pass_buf[64];
-
-// Initialisation des objets
-HardwareSerial SerialAT(1);
-#if USE_EXTERNAL_GPS
-HardwareSerial GNSS(2);  // GPS externe
-#endif
-TinyGsm modem(SerialAT);
-TinyGsmClient gsmClient(modem);
-NTRIPClient ntrip_c(gsmClient);
-
-// Objets de communication
+WiFiUDP udp;
 BluetoothSerial SerialBT;
 BLEServer* pServer = nullptr;
-BLECharacteristic* pCharacteristic = nullptr;
-WiFiUDP udp;
+BLECharacteristic* pTxCharacteristic = nullptr;
 bool deviceConnected = false;
 
-// Buffer circulaire pour les donnees GNSS
-struct CircularBuffer {
-  char data[GNSS_BUFFER_SIZE];
-  volatile size_t head;
-  volatile size_t tail;
-  volatile size_t count;
-};
+//const char* sta_ssid = "Freebox-A58F2A";
+//const char* sta_pass = "obpugnati&";
+const char* ap_ssid = "NTRIP_AP";
+const char* ap_pass = "12345678";
+//IPAddress udpRemoteIp(192,168,1,255); // en mode AP, broadcast
+IPAddress udpRemoteIp;
+uint16_t udpRemotePort = 9999;
 
-CircularBuffer gnssBuffer = {0};
+// BLE UUIDs UART Nordic
+#define SERVICE_UUID   "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHAR_UUID_TX   "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-// Queue pour les messages NMEA complets
-QueueHandle_t nmeaQueue;
+// Just in case someone defined the wrong thing..
+#if TINY_GSM_USE_GPRS && not defined TINY_GSM_MODEM_HAS_GPRS
+#undef TINY_GSM_USE_GPRS
+#undef TINY_GSM_USE_WIFI
+#define TINY_GSM_USE_GPRS false
+#define TINY_GSM_USE_WIFI true
+#define TINY_GSM_POWERDOWN true
+#endif
+#if TINY_GSM_USE_WIFI && not defined TINY_GSM_MODEM_HAS_WIFI
+#undef TINY_GSM_USE_GPRS
+#undef TINY_GSM_USE_WIFI
+#define TINY_GSM_USE_GPRS true
+#define TINY_GSM_USE_WIFI false
+#define TINY_GSM_POWERDOWN true
+#endif
 
-// Structure pour les messages NMEA
-struct NMEAMessage {
-  char data[256];
-  size_t length;
-};
+#ifdef DUMP_AT_COMMANDS
+#include <StreamDebugger.h>
+StreamDebugger debugger(SerialAT, Serial);
+TinyGsm        modem(debugger);
+#else
+TinyGsm        modem(SerialAT);
+#endif
+//TinyGsmClient mqttClient(modem,0);
+TinyGsmClient ntripClient(modem,2);
+//GSM---------------------------
 
-// Handles des taches
-TaskHandle_t xRTCMTaskHandle = NULL;
-TaskHandle_t xGNSSTaskHandle = NULL;
-TaskHandle_t xCommunicationTaskHandle = NULL;
+#include <ArduinoJson.h>
+#include <PubSubClient.h>
 
-// BLE callbacks
-class MyServerCallbacks: public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) {
-      deviceConnected = true;
-      Serial.println("Client BLE connecte");
-    };
 
-    void onDisconnect(BLEServer* pServer) {
-      deviceConnected = false;
-      Serial.println("Client BLE deconnecte");
-      pServer->startAdvertising(); // Redemarrer l'advertising
+//The ESP32 core has a built in base64 library but not every platform does
+//We'll use an external lib if necessary.
+#if defined(ARDUINO_ARCH_ESP32)
+#include "base64.h" //Built-in ESP32 library
+#else
+#include <Base64.h> //nfriendly library from https://github.com/adamvr/arduino-base64, will work with any platform
+#endif
+ 
+//PubSubClient mqtt(mqttClient); //MQTT
+long lastReconnectAttempt = 0;
+
+/* CONFIG PERIOD DE CAPTATION EN RTK*/
+bool state_fix = false;
+long nb_millisecond_recorded = 0;
+long lastState = 0;
+long lastNetworkAttemps = 0;
+void callback(char* topic, byte* payload, unsigned int length) {
+  // handle message arrived
+}
+
+
+//GNSS Global variables
+unsigned long lastReceivedRTCM_ms = 0;          //5 RTCM messages take approximately ~300ms to arrive at 115200bps
+const unsigned long maxTimeBeforeHangup_ms = 10000UL; //If we fail to get a complete RTCM frame after 10s, then disconnect from caster
+
+// Your WiFi connection credentials, if applicable
+#include <WiFi.h>
+#include <WebServer.h>
+const char* ssid = "RTCM_Monitor";
+const char* password = "gemini1779";
+WebServer server(80);
+
+unsigned long lastGgaTime = 0;
+const unsigned long ggaInterval = 10000; // 10 sec
+
+//=-=-=-=-=-=-=-=-=-=-=-=SOUS FUNCTION =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void loadPreferences() {
+  prefs.begin("ntripcfg", true); // lecture seule
+  webCaster  = prefs.getString("caster",  webCaster);
+  webPort    = prefs.getUShort("port",    webPort);
+  webMount   = prefs.getString("mount",   webMount);
+  webUser    = prefs.getString("user",    webUser);
+  webPW      = prefs.getString("pass",    webPW);
+  webSSID    = prefs.getString("ssid",    webSSID);
+  webSSIDPW  = prefs.getString("ssidpw",  webSSIDPW);
+  webAPN     = prefs.getString("apn", webAPN);
+  webSIMPASS  = prefs.getString("simpass", webSIMPASS);
+  webSIMUSER = prefs.getString("simuser", webSIMUSER);
+  prefs.end();
+}
+
+// Extraction de l’ID RTCM et comptage
+void parseRTCMMessage(uint8_t *msg, uint16_t length) {
+  if (length < 2) return; // Trop court
+
+  // Les 12 premiers bits après l'en-tête sont le Message ID
+  uint16_t id = ((msg[3] << 4) | (msg[4] >> 4)) & 0x0FFF;
+
+  // Incrément du compteur
+  for (int i = 0; i < MAX_IDS; i++) {
+    if (idCounters[i].id == id) {
+      idCounters[i].count++;
+      return;
+    } else if (idCounters[i].id == 0) {
+      idCounters[i].id = id;
+      idCounters[i].count = 1;
+      return;
     }
+  }
+}
+
+// Page HTML
+void handleRoot() {
+  server.send(200, "text/html", R"rawliteral(
+    <html>
+      <head>
+        <title>RTCM Monitor</title>
+        <meta http-equiv='refresh' content=''>
+        <style>
+          body { font-family: sans-serif; padding: 20px; }
+          table { border-collapse: collapse; }
+          th, td { padding: 6px 12px; border: 1px solid #ccc; }
+        </style>
+        <script>
+          setInterval(() => {
+            fetch('/data').then(res => res.text()).then(html => {
+              document.getElementById('table').innerHTML = html;
+            });
+          }, 1000);
+        </script>
+      </head>
+      <body>
+        <p><a href="/config">configuration du rover</a></p>
+        <h1>Etat GNSS RTK  -  RTCM </h1>
+        <h2>Caster Connection: </h2>
+        <p>Serveur : 
+        )rawliteral"+ String(webCaster) +"</p><p>Port : " + String(webPort) + "</p><p> Mountpoint : " + String(webMount) + R"rawliteral(  </p>
+        <table id='table'></table>
+      </body>
+    </html>
+  )rawliteral");
+}
+
+// Route AJAX : renvoie les compteurs en HTML brut
+void handleData() {
+  String html = "<h2> Info connexion Debit actuel : </h2>";
+  html +="<p> Signal RSSI :" + String(signalRSSI) + "dBm </p>";
+  html +="<p> Débit :" + String(kbpsData) + "kbs </p>";
+  html +="<p> Nbre connexion Caster : " + String(countRtcm) + "</p>";
+  html += "<h2>Compteurs RTCM</h2> ";
+  html +="<tr><th>Type</th><th>Compteur RTCM Trame</th></tr>";
+  for (int i = 0; i < MAX_IDS; i++) {
+    if (idCounters[i].id != 0) {
+      html += "<tr><td>" + String(idCounters[i].id) + "</td><td>" + String(idCounters[i].count) + "</td></tr>";
+    }
+  }
+  server.send(200, "text/html", html);
+}
+
+void handleConfig() {
+  String html = "<html><head><title>Configuration - Rover GNSS</title><meta http-equiv='Content-Type' content='text/html; charset=utf-8'></head><body><h1>Config NTRIP et WiFi</h1>";
+  html += "<form action='/setconfig' method='get'>";
+  html += "<fieldset><legend>Ntrip</legend>";
+  html += "Caster Host: <input name='caster' value='" + webCaster + "'><br>";
+  html += "Port: <input name='port' value='" + String(webPort) + "'><br>";
+  html += "Mountpoint: <input name='mount' value='" + webMount + "'><br>";
+  html += "NTRIP User: <input name='ntripuser' value='" + webUser + "'><br>";
+  html += "NTRIP Password: <input name='ntrippw' type='password' value='" + webPW + "'><br>";
+  html += "</fieldset>";
+  html += "<fieldset><legend>Wifi</legend>";
+  html += "WiFi SSID: <input name='ssid' value='" + webSSID + "'><br>";
+  html += "WiFi Password: <input name='ssidpw' type='password' value='" + webSSIDPW + "'><br>";
+  html += "</fieldset>";
+  html += "<fieldset><legend>4G/LTE SIM</legend>";
+  html += "APN: <input name='apn' value='" + webAPN + "'><br>";
+  html += "PIN SIM: <input name='simpass' value='" + webSIMPASS + "'><br>";
+  html += "SIM User: <input name='simuser' value='" + webSIMUSER + "'><br>";
+  html += "</fieldset>";
+  html += "<input type='submit' value='Valider'></form>";
+  html += "<form action='/reboot' method='post'><button type='submit'>Redémarrer l'appareil</button></form><p><a href=\"/\">Retour</a></p></body></html>";
+  server.send(200, "text/html", html);
+}
+
+void handleReboot() {
+  server.send(200, "text/html", 
+    "<html><head><title>Configuration - Rover GNSS</title>"
+    "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>"
+    "<meta http-equiv='refresh' content='10;URL=/'>"
+    "</head><body>Redémarrage...</body></html>");
+  delay(200);
+  ESP.restart();
+}
+void handleSetConfig() {
+  if (server.hasArg("caster"))    webCaster  = server.arg("caster");
+  if (server.hasArg("port"))      webPort    = server.arg("port").toInt();
+  if (server.hasArg("mount"))     webMount   = server.arg("mount");
+  if (server.hasArg("ntripuser")) webUser    = server.arg("ntripuser");
+  if (server.hasArg("ntrippw"))   webPW      = server.arg("ntrippw");
+  if (server.hasArg("ssid"))      webSSID    = server.arg("ssid");
+  if (server.hasArg("ssidpw"))    webSSIDPW  = server.arg("ssidpw");
+  if (server.hasArg("apn"))       webAPN     = server.arg("apn");
+  if (server.hasArg("simpass"))   webSIMPASS = server.arg("simpass");
+  if (server.hasArg("simuser"))   webSIMUSER = server.arg("simuser");
+  savePreferences();
+  server.sendHeader("Location", "/config", true);
+  server.send(200, "text/html",
+    "<html><head><meta http-equiv='refresh' content='1;URL=/config'></head>"
+    "<body><h1>Paramètres enregistrés !</h1><p>Retour à la configuration...</p></body></html>");
+}
+
+void savePreferences() {
+  prefs.begin("ntripcfg", false);
+  prefs.putString("caster",  webCaster);
+  prefs.putUShort("port",    webPort);
+  prefs.putString("mount",   webMount);
+  prefs.putString("user",    webUser);
+  prefs.putString("pass",    webPW);
+  prefs.putString("ssid",    webSSID);
+  prefs.putString("ssidpw",  webSSIDPW);
+  prefs.putString("apn", webAPN);
+  prefs.putString("simpass", webSIMPASS);
+  prefs.putString("simuser", webSIMUSER);
+  prefs.end();
+}
+
+/// COMTPEUR INFORMATION 
+void displayCounters() {
+  if (millis() - lastDisplay > 10000) {
+    if (debuggprint) {Serial.println("\n--- Compteurs RTCM ---");
+      for (int i = 0; i < MAX_IDS; i++) {
+        if (idCounters[i].id != 0) {
+          Serial.print("Type ");
+          Serial.print(idCounters[i].id);
+          Serial.print(" : ");
+          Serial.println(idCounters[i].count);
+        }
+      }
+    }
+    //////Actualisation des donnes web tier/////
+    int signal = modem.getSignalQuality();
+    signalRSSI = String(signal);
+    if (debuggprint) {
+      Serial.print("Signal RSSI: ");
+      Serial.println(signal);
+    }
+
+    ///// donnees telechargement////
+    durationData = millis() - lastDisplay;
+    secondsData = durationData / 1000.0;
+    kbData = totalData / 1024.0;
+    kbpsData = kbData / secondsData;
+    if (debuggprint) {
+      Serial.print("Débit estimé : ");
+      Serial.print(kbpsData, 2);
+      Serial.println(" KB/s");
+      Serial.print("Nombre perte connexion CASTER / GSM =  "); Serial.println(countRtcm);
+    }
+    lastDisplay = millis();
+    startData = millis();
+    totalData = 0;
+  }
+}
+
+
+// Table pour CRC-24Q (valeur initiale : 0)
+uint32_t crc24q_table[256];
+
+// Génère la table CRC-24Q une fois au démarrage
+void init_crc24q_table() {
+  const uint32_t POLY = 0x1864CFB;
+  for (int i = 0; i < 256; i++) {
+    uint32_t crc = i << 16;
+    for (int j = 0; j < 8; j++) {
+      if (crc & 0x800000)
+        crc = (crc << 1) ^ POLY;
+      else
+        crc <<= 1;
+    }
+    crc24q_table[i] = crc & 0xFFFFFF;
+  }
+}
+
+uint32_t compute_crc24q(const uint8_t *data, size_t len) {
+  uint32_t crc = 0;
+  for (size_t i = 0; i < len; i++) {
+    uint8_t idx = ((crc >> 16) ^ data[i]) & 0xFF;
+    crc = ((crc << 8) ^ crc24q_table[idx]) & 0xFFFFFF;
+  }
+  return crc;
+}
+
+
+
+void pushGPGGA()
+{
+  if (ggaDefaut.length() < 10 || !ggaDefaut.startsWith("$")) {
+        Serial.println("[NTRIP] Aucun GGA reçu du GNSS, envoi annulé.");
+        return;
+    }
+    if (debuggprint) {
+      Serial.print(F("Pushing GGA to server: "));
+   
+      Serial.print(ggaDefaut); // .nmea is printable (NULL-terminated) and already has \r\n on the end
+    }
+    String ggaToSend = ggaDefaut;
+    if (!ggaToSend.endsWith("\r\n")) ggaToSend += "\r\n";
+    ntripClient.print(String("GET / HTTP/1.0\r\n" + ggaToSend + "\r\n"));
+    lastGGA = millis();
+}
+
+void setupOutputMode() {
+  pinMode(PIN_MODE_0, INPUT_PULLUP);
+  pinMode(PIN_MODE_1, INPUT_PULLUP);
+  int m0 = digitalRead(PIN_MODE_0);
+  int m1 = digitalRead(PIN_MODE_1);
+    if (!m0 && m1) 
+      {
+        outputMode = MODE_BT;
+      }
+    else if (m0 && !m1)
+      {
+        outputMode = MODE_BLE;
+      }
+    else if (!m0 && !m1)
+      {
+        outputMode = MODE_UDP;
+      }
+    else
+      {
+        outputMode = MODE_UDP;
+      }
+}
+
+void setupBTSerial() {
+  Serial.println("Mode selectionne: BT (PIN1=HIGH, PIN2=LOW)");
+  SerialBT.begin("ESP32_NTRIP");
+  Serial.println("Bluetooth SPP démarré");
+}
+
+class ServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer)   { deviceConnected = true; }
+  void onDisconnect(BLEServer* pServer){ deviceConnected = false; }
 };
 
-// Fonctions pour le buffer circulaire
-bool bufferPut(CircularBuffer* buf, char c) {
-  if (buf->count >= GNSS_BUFFER_SIZE) {
-    return false; // Buffer plein
+void setupBLE() {
+  BLEDevice::init("ESP32_NTRIP_BLE");
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new ServerCallbacks());
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pTxCharacteristic = pService->createCharacteristic(CHAR_UUID_TX, BLECharacteristic::PROPERTY_NOTIFY);
+  pTxCharacteristic->addDescriptor(new BLE2902());
+  pService->start();
+  pServer->getAdvertising()->start();
+  Serial.println("BLE UART prêt");
+}
+
+void sendOutput(const uint8_t* buf, size_t len) {
+  if (outputMode == MODE_UDP) {
+    udp.beginPacket(udpRemoteIp, udpRemotePort);
+    udp.write(buf, len);
+    udp.endPacket();
+  } else if (outputMode == MODE_BT) {
+    SerialBT.write(buf, len);
+  } else if (outputMode == MODE_BLE && deviceConnected && pTxCharacteristic) {
+    pTxCharacteristic->setValue((uint8_t*)buf, len);
+    pTxCharacteristic->notify();
   }
-  
-  buf->data[buf->head] = c;
-  buf->head = (buf->head + 1) % GNSS_BUFFER_SIZE;
-  buf->count++;
-  return true;
 }
 
-bool bufferGet(CircularBuffer* buf, char* c) {
-  if (buf->count == 0) {
-    return false; // Buffer vide
+// Ajouter au début du setup (avant le GNSS, modem, etc)
+void initWifiUdpAuto() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(webSSID.c_str(), webSSIDPW.c_str());
+  Serial.print("Connexion au WiFi : "); Serial.println(webSSID);
+
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) {
+    delay(200);
+    Serial.print(".");
   }
-  
-  *c = buf->data[buf->tail];
-  buf->tail = (buf->tail + 1) % GNSS_BUFFER_SIZE;
-  buf->count--;
-  return true;
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnecté à un réseau existant !");
+    Serial.print("Adresse IP : "); Serial.println(WiFi.localIP());
+    IPAddress ip = WiFi.localIP();
+    IPAddress subnet = WiFi.subnetMask();
+    udpRemoteIp = IPAddress(
+      (ip[0] & subnet[0]) | (~subnet[0] & 0xFF),
+      (ip[1] & subnet[1]) | (~subnet[1] & 0xFF),
+      (ip[2] & subnet[2]) | (~subnet[2] & 0xFF),
+      (ip[3] & subnet[3]) | (~subnet[3] & 0xFF)
+    );
+
+    Serial.print("Broadcast UDP calculé : "); Serial.println(udpRemoteIp);
+    udp.begin(udpRemotePort);
+    // cible UDP : peut être un PC du LAN, mobile, ou broadcast ex: 192.168.x.255
+  } else {
+    Serial.println("\nImpossible de joindre le WiFi, création du point d'accès...");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ap_ssid, ap_pass);
+    Serial.print("AP démarré : "); Serial.println(WiFi.softAPIP());
+    udpRemoteIp = IPAddress(192, 168, 4, 255);
+    Serial.print("Broadcast UDP AP : "); Serial.println(udpRemoteIp);
+    udp.begin(udpRemotePort); // tu peux garder .255 pour broadcast sur AP local
+  }
 }
 
-size_t bufferAvailable(CircularBuffer* buf) {
-  return buf->count;
-}
 
-// Fonction pour lire le mode au boot
-CommMode readBootMode() {
-  pinMode(MODE_PIN1, INPUT_PULLUP);
-  pinMode(MODE_PIN2, INPUT_PULLUP);
-  
-  // Petit delai pour stabiliser les lectures
+//=-=-=-=-=-=-=-=-=-=-=-=-=
+void setup()
+{
+  prefs.begin("ntripcfg", false); // Pour créer l'espace si première utilisation
+  prefs.end();
+  loadPreferences();
+  init_crc24q_table();
+  //Serial.begin(460800);
+  Serial.begin(115200);  //baudrate maxi pour AOG
+  delay(200);
+  setupOutputMode(); // <- Choix mode selon GPIO
+  if (outputMode == MODE_UDP)
+    {
+      initWifiUdpAuto();
+      Serial.println("Mode selectionne: UDP (PIN1=LOW, PIN2=LOW)");
+    }
+  else if (outputMode == MODE_BT)
+    {
+      setupBTSerial();
+      Serial.println("Mode selectionne: BLE (PIN1=LOW, PIN2=HIGH)");
+    }
+  else if (outputMode == MODE_BLE)
+    {
+      setupBLE();
+      Serial.println("Mode selectionne: BLE (PIN1=LOW, PIN2=HIGH)");
+    }
+
+// GNSS Serial 
   delay(10);
-  
-  bool pin1 = digitalRead(MODE_PIN1);
-  bool pin2 = digitalRead(MODE_PIN2);
-  
-  // Configuration des modes :
-  // PIN1=HIGH, PIN2=HIGH -> MODE_UDP (00)
-  // PIN1=LOW,  PIN2=HIGH -> MODE_BLUETOOTH (01) 
-  // PIN1=HIGH, PIN2=LOW  -> MODE_BLE (10)
-  // PIN1=LOW,  PIN2=LOW  -> MODE_UDP (11) - reserve pour extension
-  
-  if (!pin1 && pin2) {
-    Serial.println("Mode selectionne: BLUETOOTH (PIN1=LOW, PIN2=HIGH)");
-    return MODE_BLUETOOTH;
-  }
-  else if (pin1 && !pin2) {
-    Serial.println("Mode selectionne: BLE (PIN1=HIGH, PIN2=LOW)");
-    return MODE_BLE;
-  }
-  else {
-    Serial.println("Mode selectionne: UDP (defaut)");
-    return MODE_UDP;
-  }
-}
+    GNSSSerial.begin(GNSSBAUD, SERIAL_8N1, GNSS_RX, GNSS_TX);
+  delay(1000);
 
-// Fonction pour verifier si le mode configuration est force
-bool isConfigModeForced() {
-  pinMode(CONFIG_PIN, INPUT_PULLUP);
-  delay(10); // Stabiliser la lecture
-  
-  bool configForced = (digitalRead(CONFIG_PIN) == LOW);
-  
-  if (configForced) {
-    Serial.println("MODE CONFIGURATION FORCE via CONFIG_PIN (LOW)");
-    Serial.println("Demarrage du portail de configuration meme si WiFi configure");
-  }
-  
-  return configForced;
-}
-
-// =============================================================================
-// FONCTION DE DEMARRAGE MODEM SPECIFIQUE PAR MODELE
-// =============================================================================
-void powerOnModem() {
-  Serial.printf("Demarrage modem %s...\n", BOARD_NAME);
-  
-#ifdef MODEL_SIM7600
+//GSM-----------------------------
+  delay(10);
+  SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
+#ifdef TINY_GSM_MODEM_SIM7600
   // Sequence pour SIM7600
   pinMode(MODEM_PWRKEY, OUTPUT);
   pinMode(MODEM_POWER, OUTPUT);
@@ -289,765 +632,516 @@ void powerOnModem() {
   delay(500);
   digitalWrite(MODEM_PWRKEY, LOW);
   delay(5000);
-  
-#elif defined(MODEL_A7670G)
-  // Sequence pour A7670G avec GPIO externe
+#elif defined(TINY_GSM_MODEM_A7670)
+// Sequence pour A7670G
   pinMode(BOARD_POWERON, OUTPUT);
-  digitalWrite(BOARD_POWERON, HIGH); // TRES IMPORTANT pour A7670G
-  
+  digitalWrite(BOARD_POWERON, HIGH);  
   pinMode(MODEM_PWRKEY, OUTPUT);
-  pinMode(MODEM_DTR, OUTPUT);
-  
+  pinMode(MODEM_DTR, OUTPUT);  
   digitalWrite(MODEM_DTR, LOW);
   delay(100);
-  
-  // Power key sequence A7670G
   digitalWrite(MODEM_PWRKEY, HIGH);
   delay(100);
   digitalWrite(MODEM_PWRKEY, LOW);
   delay(1000);
   digitalWrite(MODEM_PWRKEY, HIGH);
   delay(5000);
-  
-#elif defined(MODEL_A7670E)
-  // Sequence pour A7670E avec GPS integre
-  pinMode(BOARD_POWERON, OUTPUT);
-  digitalWrite(BOARD_POWERON, HIGH); // TRES IMPORTANT pour A7670E
-  
-  pinMode(MODEM_PWRKEY, OUTPUT);
-  pinMode(MODEM_DTR, OUTPUT);
-  
-  digitalWrite(MODEM_DTR, LOW);
-  delay(100);
-  
-  // Power key sequence A7670E
-  digitalWrite(MODEM_PWRKEY, LOW);
-  delay(100);
-  digitalWrite(MODEM_PWRKEY, HIGH);
-  delay(1000);
-  digitalWrite(MODEM_PWRKEY, LOW);
-  delay(5000);
+#else
+  #error "Aucun modele selectionne! Decommenter un #define MODEL_xxx"
 #endif
 
-  Serial.printf("Modem %s demarre\n", BOARD_NAME);
-}
-
-void initBluetooth() {
-  if (!SerialBT.begin("rover-gnss")) {
-    Serial.println("Erreur initialisation Bluetooth");
-  } else {
-    Serial.println("Bluetooth initialise: 'rover-gnss'");
-  }
-}
-
-void initBLE() {
-  BLEDevice::init("rover-gnss-ble");
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
-
-  BLEService *pService = pServer->createService("12345678-1234-1234-1234-123456789abc");
-  
-  pCharacteristic = pService->createCharacteristic(
-                      "87654321-4321-4321-4321-cba987654321",
-                      BLECharacteristic::PROPERTY_READ |
-                      BLECharacteristic::PROPERTY_WRITE |
-                      BLECharacteristic::PROPERTY_NOTIFY
-                    );
-
-  pCharacteristic->addDescriptor(new BLE2902());
-  pService->start();
-  
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID("12345678-1234-1234-1234-123456789abc");
-  pAdvertising->setScanResponse(false);
-  pAdvertising->setMinPreferred(0x0);
-  BLEDevice::startAdvertising();
-  
-  Serial.println("BLE initialise: 'rover-gnss-ble'");
-}
-
-void loadWiFiCredentials() {
-  preferences.begin("wifi", false);
-  wifi_ssid = preferences.getString("ssid", "");
-  wifi_password = preferences.getString("password", "");
-  preferences.end();
-  
-  if (wifi_ssid.length() > 0) {
-    Serial.printf("WiFi sauvegarde trouve: %s\n", wifi_ssid.c_str());
-  } else {
-    Serial.println("Aucun WiFi sauvegarde");
-  }
-}
-
-void saveWiFiCredentials(String ssid, String password) {
-  preferences.begin("wifi", false);
-  preferences.putString("ssid", ssid);
-  preferences.putString("password", password);
-  preferences.end();
-  
-  wifi_ssid = ssid;
-  wifi_password = password;
-  Serial.printf("WiFi sauvegarde: %s\n", ssid.c_str());
-}
-
-// Nouvelles fonctions pour la configuration NTRIP
-void loadNTRIPConfig() {
-  preferences.begin("ntrip", false);
-  ntrip_host = preferences.getString("host", "crtk.net");
-  ntrip_port = preferences.getInt("port", 2101);
-  ntrip_mountpoint = preferences.getString("mountpoint", "LRSEC");
-  ntrip_user = preferences.getString("user", "centipede");
-  ntrip_pass = preferences.getString("pass", "centipede");
-  preferences.end();
-  
-  // Copier vers les buffers char
-  strncpy(ntrip_host_buf, ntrip_host.c_str(), sizeof(ntrip_host_buf) - 1);
-  strncpy(ntrip_mountpoint_buf, ntrip_mountpoint.c_str(), sizeof(ntrip_mountpoint_buf) - 1);
-  strncpy(ntrip_user_buf, ntrip_user.c_str(), sizeof(ntrip_user_buf) - 1);
-  strncpy(ntrip_pass_buf, ntrip_pass.c_str(), sizeof(ntrip_pass_buf) - 1);
-  ntrip_host_buf[sizeof(ntrip_host_buf) - 1] = '\0';
-  ntrip_mountpoint_buf[sizeof(ntrip_mountpoint_buf) - 1] = '\0';
-  ntrip_user_buf[sizeof(ntrip_user_buf) - 1] = '\0';
-  ntrip_pass_buf[sizeof(ntrip_pass_buf) - 1] = '\0';
-  
-  Serial.printf("Configuration NTRIP chargee: %s@%s:%d\n", ntrip_mountpoint.c_str(), ntrip_host.c_str(), ntrip_port);
-}
-
-void saveNTRIPConfig(String host, int port, String mountpoint, String user, String pass) {
-  preferences.begin("ntrip", false);
-  preferences.putString("host", host);
-  preferences.putInt("port", port);
-  preferences.putString("mountpoint", mountpoint);
-  preferences.putString("user", user);
-  preferences.putString("pass", pass);
-  preferences.end();
-  
-  ntrip_host = host;
-  ntrip_port = port;
-  ntrip_mountpoint = mountpoint;
-  ntrip_user = user;
-  ntrip_pass = pass;
-  
-  // Copier vers les buffers char
-  strncpy(ntrip_host_buf, host.c_str(), sizeof(ntrip_host_buf) - 1);
-  strncpy(ntrip_mountpoint_buf, mountpoint.c_str(), sizeof(ntrip_mountpoint_buf) - 1);
-  strncpy(ntrip_user_buf, user.c_str(), sizeof(ntrip_user_buf) - 1);
-  strncpy(ntrip_pass_buf, pass.c_str(), sizeof(ntrip_pass_buf) - 1);
-  ntrip_host_buf[sizeof(ntrip_host_buf) - 1] = '\0';
-  ntrip_mountpoint_buf[sizeof(ntrip_mountpoint_buf) - 1] = '\0';
-  ntrip_user_buf[sizeof(ntrip_user_buf) - 1] = '\0';
-  ntrip_pass_buf[sizeof(ntrip_pass_buf) - 1] = '\0';
-  
-  Serial.printf("Configuration NTRIP sauvegardee: %s@%s:%d\n", mountpoint.c_str(), host.c_str(), port);
-}
-
-void handleRoot() {
-  String html = R"html(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Configuration - Rover GNSS</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <style>
-        body { font-family: Arial; margin: 20px; background: #f0f0f0; }
-        .container { background: white; padding: 30px; border-radius: 10px; max-width: 500px; margin: 0 auto; }
-        h1 { color: #333; text-align: center; margin-bottom: 30px; }
-        .section { margin: 30px 0; padding: 20px; background: #f8f9fa; border-radius: 8px; }
-        .section h2 { color: #007cba; margin-top: 0; margin-bottom: 15px; font-size: 18px; }
-        input[type="text"], input[type="password"] { 
-            width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; 
-            border-radius: 5px; box-sizing: border-box; 
-        }
-        label { display: block; margin-top: 15px; margin-bottom: 5px; font-weight: bold; color: #333; }
-        button { 
-            background: #007cba; color: white; padding: 15px 30px; border: none; 
-            border-radius: 5px; cursor: pointer; width: 100%; font-size: 16px; margin-top: 15px;
-        }
-        button:hover { background: #005a87; }
-        button.secondary { background: #6c757d; margin-top: 10px; }
-        button.secondary:hover { background: #545b62; }
-        .info { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 20px 0; }
-        .networks { margin: 15px 0; }
-        .network { 
-            background: #ffffff; padding: 12px; margin: 5px 0; border-radius: 5px; 
-            cursor: pointer; border: 1px solid #ddd;
-        }
-        .network:hover { background: #e9ecef; }
-        .current-config { background: #d4edda; padding: 15px; border-radius: 5px; margin: 15px 0; }
-        .current-config h3 { margin-top: 0; color: #155724; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>ROVER GNSS )html" + String(BOARD_NAME) + R"html(</h1>
-        
-        <div class="current-config">
-            <h3>Configuration actuelle</h3>
-            <strong>WiFi:</strong> )html" + (wifi_ssid.length() > 0 ? wifi_ssid : "Non configuré") + R"html(<br>
-            <strong>NTRIP:</strong> )html" + ntrip_mountpoint + R"html(@)html" + ntrip_host + R"html(:)html" + String(ntrip_port) + R"html( (utilisateur: )html" + ntrip_user + R"html()<br>
-            <strong>Mode forcé:</strong> )html" + (isConfigModeForced() ? "OUI (CONFIG_PIN actif)" : "NON") + R"html(
-        </div>
-        
-        <div class="section">
-            <h2>📶 Configuration WiFi</h2>
-            <div class="info">
-                Connectez-vous à votre réseau WiFi pour diffuser les données NMEA en UDP.<br>
-                <strong>Astuce:</strong> Pour accéder à cette configuration à tout moment, mettez le pin CONFIG_PIN (pin 13) à la masse au démarrage.
-            </div>
-            
-            <div class="networks" id="networks">
-                <button onclick="scanNetworks()">Scanner les réseaux</button>
-            </div>
-            
-            <form action="/save" method="POST">
-                <label>Nom du réseau (SSID):</label>
-                <input type="text" name="ssid" id="ssid" placeholder="Nom du WiFi" value=")html" + wifi_ssid + R"html(" required>
-                
-                <label>Mot de passe:</label>
-                <input type="password" name="password" id="password" placeholder="Mot de passe WiFi" required>
-                
-                <div class="section">
-                    <h2>📡 Configuration NTRIP</h2>
-                    <div class="info">
-                        Configurez votre serveur de corrections NTRIP (caster) pour les corrections RTK.<br>
-                        <strong>Exemples:</strong> crtk.net, rtk2go.com, igs-ip.net, etc.
-                    </div>
-                    
-                    <label>Adresse du serveur NTRIP (Caster):</label>
-                    <input type="text" name="ntrip_host" id="ntrip_host" placeholder="Ex: crtk.net" value=")html" + ntrip_host + R"html(" required>
-                    
-                    <label>Port du serveur NTRIP:</label>
-                    <input type="number" name="ntrip_port" id="ntrip_port" placeholder="2101" value=")html" + String(ntrip_port) + R"html(" min="1" max="65535" required>
-                    
-                    <label>Point de montage (Mountpoint):</label>
-                    <input type="text" name="mountpoint" id="mountpoint" placeholder="Ex: LRSEC" value=")html" + ntrip_mountpoint + R"html(" required>
-                    
-                    <label>Nom d'utilisateur NTRIP:</label>
-                    <input type="text" name="ntrip_user" id="ntrip_user" placeholder="Ex: centipede" value=")html" + ntrip_user + R"html(" required>
-                    
-                    <label>Mot de passe NTRIP:</label>
-                    <input type="password" name="ntrip_pass" id="ntrip_pass" placeholder="Mot de passe NTRIP" value=")html" + ntrip_pass + R"html(" required>
-                </div>
-                
-                <button type="submit">Sauvegarder et Redémarrer</button>
-            </form>
-        </div>
-    </div>
-    
-    <script>
-        function selectNetwork(ssid) {
-            document.getElementById('ssid').value = ssid;
-        }
-        
-        function scanNetworks() {
-            document.getElementById('networks').innerHTML = '<div>Scan en cours...</div>';
-            fetch('/scan')
-                .then(response => response.json())
-                .then(data => {
-                    let html = '<button onclick="scanNetworks()">Re-scanner</button>';
-                    data.forEach(network => {
-                        html += `<div class="network" onclick="selectNetwork('${network.ssid}')">${network.ssid} (${network.rssi} dBm)</div>`;
-                    });
-                    document.getElementById('networks').innerHTML = html;
-                })
-                .catch(error => {
-                    document.getElementById('networks').innerHTML = '<div>Erreur lors du scan</div>';
-                });
-        }
-    </script>
-</body>
-</html>
-)html";
-  
-  server.send(200, "text/html", html);
-}
-
-void handleScan() {
-  int n = WiFi.scanNetworks();
-  String json = "[";
-  
-  for (int i = 0; i < n; i++) {
-    if (i > 0) json += ",";
-    json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
-  }
-  json += "]";
-  
-  server.send(200, "application/json", json);
-}
-
-void handleSave() {
-  if (server.hasArg("ssid") && server.hasArg("password") && 
-      server.hasArg("ntrip_host") && server.hasArg("ntrip_port") &&
-      server.hasArg("mountpoint") && server.hasArg("ntrip_user") && server.hasArg("ntrip_pass")) {
-    
-    String ssid = server.arg("ssid");
-    String password = server.arg("password");
-    String ntripHost = server.arg("ntrip_host");
-    int ntripPort = server.arg("ntrip_port").toInt();
-    String mountpoint = server.arg("mountpoint");
-    String ntripUser = server.arg("ntrip_user");
-    String ntripPass = server.arg("ntrip_pass");
-    
-    // Validation du port
-    if (ntripPort < 1 || ntripPort > 65535) {
-      ntripPort = 2101; // Valeur par défaut si invalide
-    }
-    
-    // Sauvegarder les configurations
-    saveWiFiCredentials(ssid, password);
-    saveNTRIPConfig(ntripHost, ntripPort, mountpoint, ntripUser, ntripPass);
-    
-    String html = R"html(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Configuration sauvegardée</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">    
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <style>
-        body { font-family: Arial; margin: 40px; background: #f0f0f0; text-align: center; }
-        .container { background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto; }
-        .success { color: #28a745; }
-        .config-summary { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: left; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1 class="success">Configuration sauvegardée!</h1>
-        <div class="config-summary">
-            <strong>WiFi:</strong> )html" + ssid + R"html(<br>
-            <strong>Serveur NTRIP:</strong> )html" + ntripHost + R"html(:)html" + String(ntripPort) + R"html(<br>
-            <strong>Mountpoint:</strong> )html" + mountpoint + R"html(<br>
-            <strong>Utilisateur NTRIP:</strong> )html" + ntripUser + R"html(
-        </div>
-        <p>Le rover va redémarrer et se connecter avec la nouvelle configuration.</p>
-        <p>Redémarrage dans 5 secondes...</p>
-    </div>
-    <script>
-        setTimeout(() => {
-            window.location.href = '/';
-        }, 5000);
-    </script>
-</body>
-</html>
-)html";
-    
-    server.send(200, "text/html", html);
-    
-    delay(3000);
-    ESP.restart();
-  } else {
-    server.send(400, "text/plain", "Paramètres manquants");
-  }
-}
-
-void startConfigPortal() {
-  configMode = true;
-  Serial.println("Demarrage du portail de configuration WiFi");
-  
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(ap_ssid, ap_password);
-  
-  Serial.printf("Point d'acces cree: %s\n", ap_ssid);
-  Serial.printf("Mot de passe: %s\n", ap_password);
-  Serial.printf("Adresse IP: %s\n", WiFi.softAPIP().toString().c_str());
-  Serial.println("Connectez-vous au WiFi 'rover-gnss-config' et allez sur http://192.168.4.1");
-  
+  // Web server routes
   server.on("/", handleRoot);
-  server.on("/scan", handleScan);
-  server.on("/save", HTTP_POST, handleSave);
+  server.on("/data", handleData);
+  server.on("/config", handleConfig);
+  server.on("/setconfig", handleSetConfig);
+  server.on("/reboot", HTTP_POST, handleReboot);
   server.begin();
-}
+  delay(1000);
 
-void initWiFi() {
-  loadWiFiCredentials();
-  
-  // Verifier si le mode configuration est force par le pin
-  bool configForced = isConfigModeForced();
-  
-  if (wifi_ssid.length() == 0 || configForced) {
-    if (configForced) {
-      Serial.println("Mode configuration force - Demarrage du portail de configuration");
-    } else {
-      Serial.println("Aucun WiFi configure - Demarrage du portail de configuration");
-    }
-    startConfigPortal();
-    return;
+  Serial.println("Initializing modem...");
+  if (!modem.init()) {
+    Serial.println("Failed to restart modem, attempting to continue without restarting");
   }
-  
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
-  Serial.printf("Connexion WiFi: %s", wifi_ssid.c_str());
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.print("WiFi connecte: ");
-    Serial.println(WiFi.localIP());
-    udp.begin(udpPort);
-    Serial.printf("UDP broadcaster sur port %d\n", udpPort);
-  } else {
-    Serial.println("\nEchec connexion WiFi - Demarrage du portail de configuration");
-    startConfigPortal();
-  }
-}
-
-void initSelectedMode() {
-  switch (currentMode) {
-    case MODE_BLUETOOTH:
-      Serial.println("Initialisation Bluetooth");
-      initBluetooth();
-      break;
-    case MODE_BLE:
-      Serial.println("Initialisation BLE");
-      initBLE();
-      break;
-    case MODE_UDP:
-      Serial.println("Initialisation UDP/WiFi");
-      initWiFi();
-      break;
-  }
-}
-
-// =============================================================================
-// TACHES RTCM ET GNSS SPECIFIQUES PAR MODELE
-// =============================================================================
-void handleRTCMTask(void *pvParameters) {
-  char buffer[512];
-  size_t bytesRead;
-  
-  while (1) {
-    if (ntrip_c.available()) {
-      // Lire par blocs pour reduire les appels systeme
-      bytesRead = 0;
-      while (ntrip_c.available() && bytesRead < sizeof(buffer)) {
-        buffer[bytesRead++] = ntrip_c.read();
-      }
-      
-      if (bytesRead > 0) {
-#if USE_EXTERNAL_GPS
-        // Ecrire les corrections RTCM au GPS externe
-        GNSS.write((uint8_t*)buffer, bytesRead);
-#else
-        // Envoyer les corrections RTCM au modem A7670E via AT+CGPSRXD
-        String rtcmCmd = "AT+CGPSRXD=";
-        for (size_t i = 0; i < bytesRead; i++) {
-          if (buffer[i] < 16) rtcmCmd += "0";
-          rtcmCmd += String(buffer[i], HEX);
-        }
-        modem.sendAT(rtcmCmd);
-        modem.waitResponse();
-#endif
-      }
-    }
-    vTaskDelay(pdMS_TO_TICKS(5)); // 5ms delay
-  }
-}
-
-void handleGNSSTask(void *pvParameters) {
-#if USE_EXTERNAL_GPS
-  // Version GPS externe (SIM7600 et A7670G)
-  char nmeaBuffer[256];
-  size_t nmeaIndex = 0;
-  char c;
-  
-  while (1) {
-    // Lire toutes les donnees disponibles du GPS externe
-    while (GNSS.available()) {
-      c = GNSS.read();
-      bufferPut(&gnssBuffer, c);
-    }
-    
-    // Traiter les donnees du buffer circulaire
-    while (bufferGet(&gnssBuffer, &c)) {
-      if (c == '$' || c == '!') {
-        // Debut d'une nouvelle trame NMEA
-        nmeaIndex = 0;
-        nmeaBuffer[nmeaIndex++] = c;
-      }
-      else if (c == '\n' && nmeaIndex > 0) {
-        // Fin de trame NMEA
-        nmeaBuffer[nmeaIndex++] = c;
-        nmeaBuffer[nmeaIndex] = '\0';
-        
-        // Envoyer le message complet a la queue
-        NMEAMessage msg;
-        msg.length = nmeaIndex;
-        memcpy(msg.data, nmeaBuffer, nmeaIndex + 1);
-        
-        // Envoi non-bloquant vers la queue
-        if (xQueueSend(nmeaQueue, &msg, 0) != pdTRUE) {
-          Serial.println("Queue NMEA pleine");
-        }
-        
-        nmeaIndex = 0;
-      }
-      else if (nmeaIndex < sizeof(nmeaBuffer) - 2) {
-        nmeaBuffer[nmeaIndex++] = c;
-      }
-      else {
-        // Buffer overflow, recommencer
-        nmeaIndex = 0;
-      }
-    }
-    
-    vTaskDelay(pdMS_TO_TICKS(1)); // 1ms delay
-  }
-  
-#else
-  // Version GPS integre A7670E
-  String gpsData;
-  
-  while (1) {
-    // Demander les donnees GPS au modem A7670E
-    if (modem.sendAT("+CGPSINFO")) {
-      if (modem.waitResponse(1000L, gpsData) == 1) {
-        if (gpsData.indexOf("+CGPSINFO:") != -1) {
-          // Extraire les donnees NMEA
-          int start = gpsData.indexOf(":") + 1;
-          String nmea = gpsData.substring(start);
-          nmea.trim();
-          
-          if (nmea.length() > 0 && nmea != ",,,,,,,,") {
-            // Convertir en format NMEA standard
-            String gga = "$GPGGA," + nmea + "*00\r\n";
-            
-            // Traiter comme une trame NMEA complete
-            NMEAMessage msg;
-            msg.length = gga.length();
-            strcpy(msg.data, gga.c_str());
-            
-            // Envoi non-bloquant vers la queue
-            if (xQueueSend(nmeaQueue, &msg, 0) != pdTRUE) {
-              Serial.println("Queue NMEA pleine");
-            }
-          }
-        }
-      }
-    }
-    
-    vTaskDelay(pdMS_TO_TICKS(1000)); // 1 seconde entre les requetes GPS
-  }
-#endif
-}
-
-void handleCommunicationTask(void *pvParameters) {
-  NMEAMessage msg;
-  char commBuffer[BT_BUFFER_SIZE];
-  size_t commBufferIndex = 0;
-  TickType_t lastFlush = xTaskGetTickCount();
-  
-  while (1) {
-    // Recevoir les messages de la queue
-    while (xQueueReceive(nmeaQueue, &msg, pdMS_TO_TICKS(1)) == pdTRUE) {
-      switch (currentMode) {
-        case MODE_BLUETOOTH:
-          // Buffering pour Bluetooth
-          if (commBufferIndex + msg.length < BT_BUFFER_SIZE) {
-            memcpy(&commBuffer[commBufferIndex], msg.data, msg.length);
-            commBufferIndex += msg.length;
-          } else {
-            if (commBufferIndex > 0) {
-              SerialBT.write((uint8_t*)commBuffer, commBufferIndex);
-              commBufferIndex = 0;
-            }
-            if (msg.length < BT_BUFFER_SIZE) {
-              memcpy(commBuffer, msg.data, msg.length);
-              commBufferIndex = msg.length;
-            }
-          }
-          break;
-          
-        case MODE_BLE:
-          // Envoi direct pour BLE (limite de 20 octets par notification)
-          if (deviceConnected && pCharacteristic) {
-            // Decouper en chunks de 20 octets max
-            size_t offset = 0;
-            while (offset < msg.length) {
-              size_t chunkSize = min((size_t)20, msg.length - offset);
-              pCharacteristic->setValue((uint8_t*)&msg.data[offset], chunkSize);
-              pCharacteristic->notify();
-              offset += chunkSize;
-              vTaskDelay(pdMS_TO_TICKS(1)); // Petit delai entre chunks
-            }
-          }
-          break;
-          
-        case MODE_UDP:
-          // Envoi direct UDP (seulement si connecte et pas en mode config)
-          if (!configMode && WiFi.status() == WL_CONNECTED) {
-            udp.beginPacket(udpAddress, udpPort);
-            udp.write((uint8_t*)msg.data, msg.length);
-            udp.endPacket();
-          }
-          break;
-      }
-    }
-    
-    // Flush periodique pour Bluetooth
-    if (currentMode == MODE_BLUETOOTH) {
-      TickType_t currentTime = xTaskGetTickCount();
-      if (commBufferIndex > 0 && 
-          (commBufferIndex > BT_BUFFER_SIZE / 2 || 
-           (currentTime - lastFlush) > pdMS_TO_TICKS(50))) {
-        
-        SerialBT.write((uint8_t*)commBuffer, commBufferIndex);
-        commBufferIndex = 0;
-        lastFlush = currentTime;
-      }
-    }
-    
-    vTaskDelay(pdMS_TO_TICKS(5)); // 5ms delay - plus reactif
-    
-    // Gerer le serveur web en mode configuration
-    if (configMode) {
-      server.handleClient();
-    }
-  }
-}
-
-void setup() {
-  Serial.begin(115200);
-  delay(1500);
-  
-  Serial.printf("=== ROVER GNSS %s ===\n", BOARD_NAME);
-  Serial.printf("GPS: %s\n", USE_EXTERNAL_GPS ? "Externe" : "Integre");
-  Serial.printf("CONFIG_PIN: %d (LOW=force config mode)\n", CONFIG_PIN);
-  
-  // Verifier en premier si le mode configuration est force
-  if (isConfigModeForced()) {
-    Serial.println("=== MODE CONFIGURATION FORCE ===");
-    Serial.println("Demarrage direct du portail de configuration...");
-    startConfigPortal();
-    
-    // En mode configuration force, on ne demarre pas le modem
-    // On reste uniquement en mode portail de configuration
-    while (true) {
-      server.handleClient();
-      delay(10);
-    }
-  }
-  
-  // Charger la configuration NTRIP sauvegardee
-  loadNTRIPConfig();
-  
-  // Configuration du modem selon le modele
-  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
-  delay(1500);
-  
-  powerOnModem();
-  delay(3000);
-
-  Serial.printf("Initialisation modem %s...\n", BOARD_NAME);
+  Serial.print("APN="); Serial.print(webAPN);
+  Serial.print(", SIMUSER="); Serial.print(webSIMUSER);
+  Serial.print(", SIMPASS="); Serial.print(webSIMPASS);
+  Serial.println("");
+  delay(1000);
+  Serial.printf("Initialisation modem");
   if (!modem.restart()) {
     Serial.println("modem.restart() echoue");
     while (true);
   }
-
-  Serial.println("Connexion GPRS...");
-  if (!modem.gprsConnect(apn, user, pass)) {
-    Serial.println("GPRS echoue");
-    while (true);
-  }
-
-  Serial.println("GPRS connecte");
-  Serial.print("IP : ");
-  Serial.println(modem.localIP());
-
-  Serial.printf("Connexion au MountPoint %s@%s:%d...\n", ntrip_mountpoint.c_str(), ntrip_host.c_str(), ntrip_port);
-  // Utiliser les buffers char au lieu des String.c_str()
-  if (!ntrip_c.reqRaw(ntrip_host_buf, ntrip_port, ntrip_mountpoint_buf, ntrip_user_buf, ntrip_pass_buf)) {
-    Serial.println("Echec connexion NTRIP - redemarrage dans 15s");
-    delay(15000);
-    ESP.restart();
-  }
-
-  Serial.printf("Connecte au MountPoint %s@%s:%d\n", ntrip_mountpoint.c_str(), ntrip_host.c_str(), ntrip_port);
-  delay(500);
-
-  // Configuration GPS selon le modele
-#if USE_EXTERNAL_GPS
-  Serial.println("Configuration GPS externe...");
-  GNSS.begin(bauds, SERIAL_8N1, GNSS_RX, GNSS_TX);
-  GNSS.setRxBufferSize(2048); // Augmenter le buffer RX
-  delay(500);
-#else
-  Serial.println("Activation GPS integre A7670E...");
-  modem.sendAT("+CGPS=1,1"); // Demarrer GPS avec mode NMEA
-  modem.waitResponse();
   delay(1000);
-#endif
-
-  // Lire le mode de communication depuis les pins
-  currentMode = readBootMode();
-
-  // Initialiser le mode selectionne
-  initSelectedMode();
-  
-  // Creer la queue pour les messages NMEA
-  nmeaQueue = xQueueCreate(QUEUE_SIZE, sizeof(NMEAMessage));
-  if (nmeaQueue == NULL) {
-    Serial.println("Echec creation queue NMEA");
-    while (true);
-  }
-
-  delay(500);
-
-  // Desactiver le watchdog pour les taches
-  esp_task_wdt_deinit();
-
-  // Creer les taches FreeRTOS avec priorites optimisees
-  xTaskCreatePinnedToCore(handleRTCMTask, "RTCM Task", 8192, NULL, 3, &xRTCMTaskHandle, 0);
-  xTaskCreatePinnedToCore(handleGNSSTask, "GNSS Task", 8192, NULL, 2, &xGNSSTaskHandle, 1);
-  xTaskCreatePinnedToCore(handleCommunicationTask, "Communication Task", 8192, NULL, 1, &xCommunicationTaskHandle, 1);
-  
-  Serial.printf("=== ROVER %s PRET ===\n", BOARD_NAME);
-  Serial.printf("Configuration NTRIP: %s@%s:%d (utilisateur: %s)\n", 
-                ntrip_mountpoint.c_str(), ntrip_host.c_str(), ntrip_port, ntrip_user.c_str());
+  if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
+    Serial.println("fail");
+    delay(10000);
+    return;
 }
 
-void loop() {
-  // Surveillance optionnelle des performances
-  static unsigned long lastStats = 0;
-  if (millis() - lastStats > 30000) { // Toutes les 30 secondes
-    const char* modeNames[] = {"Bluetooth", "BLE", "UDP"};
-    
-    if (configMode) {
-      Serial.printf("Mode: CONFIG (Portail WiFi actif), Queue: %d/%d\n",
-                    uxQueueMessagesWaiting(nmeaQueue), QUEUE_SIZE);
-      Serial.printf("Connectez-vous au WiFi '%s' et allez sur http://192.168.4.1\n", ap_ssid);
-    } else {
-      Serial.printf("Mode: %s (fixe), Model: %s, GPS: %s\n", 
-                    modeNames[currentMode], 
-                    BOARD_NAME,
-                    USE_EXTERNAL_GPS ? "Externe" : "Integre");
-      
-      Serial.printf("NTRIP: %s@%s:%d (%s)\n", 
-                    ntrip_mountpoint.c_str(), ntrip_host.c_str(), ntrip_port, ntrip_user.c_str());
-                    
-#if USE_EXTERNAL_GPS
-      Serial.printf("Buffer GNSS: %d/%d, Queue: %d/%d\n",
-                    bufferAvailable(&gnssBuffer), GNSS_BUFFER_SIZE,
-                    uxQueueMessagesWaiting(nmeaQueue), QUEUE_SIZE);
-#else
-      Serial.printf("Queue: %d/%d\n",
-                    uxQueueMessagesWaiting(nmeaQueue), QUEUE_SIZE);
-#endif
-      
-      if (currentMode == MODE_UDP && WiFi.status() == WL_CONNECTED) {
-        Serial.printf("WiFi IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.print("Waiting for network...");
+  int lastNetworkAttemps = millis();
+  int now = millis(); 
+
+  // Testing 4G connection during ACQUISION_PERIOD_4G ( second ), if not connected after that, DeepSleep is launched
+  while(!modem.waitForNetwork() && ( now - lastNetworkAttemps < ACQUISION_PERIOD_4G ) ) {
+  //if (!modem.waitForNetwork()) {
+    Serial.println("fail to find network, waiting 10sec before retry");
+    delay(10000);
+    now = millis();
+    //return;
+  }
+
+  if (modem.isNetworkConnected()) {
+      Serial.println("Network connected");
+  }
+
+    Serial.print(F("Connecting to "));
+    Serial.print(webAPN);
+    if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
+        Serial.println(" fail");
+        delay(10000);
+        return;
+    }
+    Serial.println(" success");
+
+    if (modem.isGprsConnected()) {
+        Serial.println("GPRS connected");
+    }
+
+  Serial.println(F("NTRIP testing"));
+
+  now = millis();
+  lastNetworkAttemps = millis();
+  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+
+
+  while (Serial.available()) // Empty the serial buffer
+    Serial.read();
+}
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=- LOOP  =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void loop()
+{
+  server.handleClient();    // ecoute sur les entre WEB
+  static bool ggaOk = false;
+  // =-=-=-=-= GNSS READ STATE =-=-=-=-=
+  if (GNSSSerial.available()) // Check for a new key press
+  {
+    String s = GNSSSerial.readStringUntil('\n');
+    //Serial.println(s); // Empty the serial buffer
+    if (s.startsWith("$GNGGA") || s.startsWith("$GPGGA")) {
+        ggaDefaut = s;
+        ggaOk = true;
+    }
+    sendOutput((const uint8_t*)s.c_str(), s.length());
+  }
+
+
+  // =-=-=-=-= NTRIP STATE =-=-=-=-=
+  long now = millis();
+  enum states // Use a 'state machine' to open and close the connection
+  {
+    open_connection,
+    push_data_and_wait_for_keypress,
+    close_connection,
+    waiting_for_keypress
+  };
+  static states state = open_connection;
+
+  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+  switch (state)
+  {
+    case open_connection:
+      if (!ggaOk)
+        {
+          if (debuggprint) Serial.println("Attente d'une trame GGA du GNSS pour ouvrir la connexion NTRIP...");
+          break; // On n'avance pas dans la state machine !
+        }
+      Serial.println(F("Connecting to the NTRIP caster..."));
+      if (beginClient()) // Try to open the connection to the caster
+      {
+        if (debuggprint) {Serial.println(F("Connected to the NTRIP caster! Press any key to disconnect..."));}
+        state = push_data_and_wait_for_keypress; // Move on
       }
+      else
+      {
+        if (debuggprint) {Serial.print(F("Could not connect to the caster. Trying again in 5 seconds."));}
+        for (int i = 0; i < 5; i++)
+        {
+          delay(1000);
+          if (debuggprint) {Serial.print(F("."));}
+        }
+        Serial.println();
+      }
+      break;
+
+    //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+    case push_data_and_wait_for_keypress:
+      // If the connection has dropped or timed out, or if the user has pressed a key
+      //if ((processConnection() == false) || (keyPressed()))
+      if ((processConnection() == false))
+      {
+        state = close_connection; // Move on
+      }
+      break;
+
+    //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+    case close_connection:
+      if (debuggprint) {Serial.println(F("Closing the connection to the NTRIP caster..."));}
+      closeConnection();
+      if (debuggprint) {Serial.println(F("Press any key to reconnect..."));}
+      state = waiting_for_keypress; // Move on
+      break;
+
+    //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+    case waiting_for_keypress:
+      // If the connection has dropped or timed out, or if the user has pressed a key
+      //if (keyPressed())
+      state = open_connection; // Move on
+      break;
+  }
+  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+  
+  //GSM-------------------------------
+   now = millis();
+    // Make sure we're still registered on the network
+    if (!modem.isNetworkConnected()) {
+      lastNetworkAttemps = millis();
+      if (debuggprint) {Serial.println("LOOP - Network disconnected");}
+
+      // Testing 4G connection during ACQUISION_PERIOD_4G ( second ), if not connected after that, DeepSleep is launched
+      while(!modem.waitForNetwork() && ( now - lastNetworkAttemps < ACQUISION_PERIOD_4G ) ) {
+        if (debuggprint) {Serial.println("LOOP - fail to find network, waiting 10sec before retry");}
+        delay(10000);
+        now = millis();
+      }
+
+      if (modem.isNetworkConnected()) {
+          if (debuggprint) {Serial.println("LOOP - Network re-connected");}
+      }
+
+
+      if (!modem.isGprsConnected()) {
+            if (debuggprint) {Serial.println("GPRS disconnected!");
+            Serial.print(F("Connecting to "));
+            Serial.print(webAPN);}
+            if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
+                if (debuggprint) {Serial.println(" fail");}
+                delay(10000);
+                return;
+            }
+            if (modem.isGprsConnected()) {
+                if (debuggprint) {Serial.println("GPRS reconnected");}
+            }
+        }
+    }
+  //DeepSleep configuration
+    if ( lastState == 0 ) {
+        if (debuggprint) {Serial.println("lastState == 0 Valued to " + String(now) );}
+        lastState = now;
     }
     
-    lastStats = millis();
+
+    if ((ntripClient.connected() == true) && (transmitLocation == true) && (millis() - lastGGA > timeSendGGA))
+  { if (debuggprint) {Serial.println("Push data gga to caster");}
+    lastGGA = millis();
+    pushGPGGA();}
+}
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= FUNCTION -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+
+//Connect to NTRIP Caster. Return true is connection is successful.
+bool beginClient()
+{
+  if (debuggprint) {
+    Serial.print(F("Opening socket to "));
+    Serial.println(webCaster);
   }
-  
-  delay(1000);
+
+  if (ntripClient.connect(webCaster.c_str(), webPort) == false) //Attempt connection
+  {
+    if (debuggprint) {Serial.println(F("Connection to caster failed"));}
+    return (false);
+  }
+  else
+  { countRtcm++;
+    if (debuggprint) {
+      Serial.print(F("Connected to "));
+      Serial.print(webCaster);
+      Serial.print(F(" : "));
+      Serial.println(webPort);
+
+      Serial.print(F("Requesting NTRIP Data from mount point "));
+      Serial.println(webMount.c_str());
+    }
+
+    // Set up the server request (GET)
+    const int SERVER_BUFFER_SIZE = 512;
+    char serverRequest[SERVER_BUFFER_SIZE];
+    snprintf(serverRequest,
+             SERVER_BUFFER_SIZE,
+             "GET /%s HTTP/1.0\r\nUser-Agent: NTRIP SparkFun u-blox Client v1.0\r\n",
+             webMount.c_str());
+
+    // Set up the credentials
+    char credentials[512];
+    if (strlen(webUser.c_str()) == 0)
+    {
+      strncpy(credentials, "Accept: */*\r\nConnection: close\r\n", sizeof(credentials));
+    }
+    else
+    {
+      //Pass base64 encoded user:pw
+      char userCredentials[sizeof(webUser.c_str()) + sizeof(webPW.c_str()) + 2]; //The ':' takes up a spot
+      snprintf(userCredentials, sizeof(userCredentials), "%s:%s", webUser.c_str(), webPW.c_str());
+
+      if (debuggprint) {
+        Serial.print(F("Sending credentials: "));
+        Serial.println(userCredentials);
+      }
+
+  #if defined(ARDUINO_ARCH_ESP32)
+      //Encode with ESP32 built-in library
+      base64 b;
+      String strEncodedCredentials = b.encode(userCredentials);
+      char encodedCredentials[strEncodedCredentials.length() + 1];
+      strEncodedCredentials.toCharArray(encodedCredentials, sizeof(encodedCredentials)); //Convert String to char array
+  #else
+      //Encode with nfriendly library
+      int encodedLen = base64_enc_len(strlen(userCredentials));
+      char encodedCredentials[encodedLen];                                         //Create array large enough to house encoded data
+      base64_encode(encodedCredentials, userCredentials, strlen(userCredentials)); //Note: Input array is consumed
+  #endif
+
+      snprintf(credentials, sizeof(credentials), "Authorization: Basic %s\r\n", encodedCredentials);
+    }
+
+    // Add the encoded credentials to the server request
+    strncat(serverRequest, credentials, SERVER_BUFFER_SIZE);
+    strncat(serverRequest, "\r\n", SERVER_BUFFER_SIZE);
+
+    if (debuggprint) {
+      Serial.print(F("serverRequest size: "));
+      Serial.print(strlen(serverRequest));
+      Serial.print(F(" of "));
+      Serial.print(sizeof(serverRequest));
+      Serial.println(F(" bytes available"));
+
+    // Send the server request
+      Serial.println(F("Sending server request: "));
+      Serial.println(serverRequest);
+    }
+    ntripClient.write((const uint8_t*)serverRequest, strlen(serverRequest));
+
+    //Wait up to 5 seconds for response
+    unsigned long startTime = millis();
+    while (ntripClient.available() == 0)
+    {
+      if (millis() > (startTime + 5000))
+      {
+        if (debuggprint) {Serial.println(F("Caster timed out!"));}
+        ntripClient.stop();
+        return (false);
+      }
+      delay(10);
+    }
+
+    //Check reply
+    int connectionResult = 0;
+    char response[512];
+    size_t responseSpot = 0;
+    while (ntripClient.available()) // Read bytes from the caster and store them
+    {
+      if (responseSpot == sizeof(response) - 1) // Exit the loop if we get too much data
+        break;
+
+      response[responseSpot++] = ntripClient.read();
+
+      if (connectionResult == 0) // Only print success/fail once
+      {
+        if (strstr(response, "200") != NULL) //Look for '200 OK'
+        {
+          connectionResult = 200;
+        }
+        if (strstr(response, "401") != NULL) //Look for '401 Unauthorized'
+        {
+          if (debuggprint) {Serial.println(F("Hey - your credentials look bad! Check your caster username and password."));}
+          connectionResult = 401;
+        }
+      }
+    }
+    response[responseSpot] = '\0'; // NULL-terminate the response
+
+    //Serial.print(F("Caster responded with: ")); Serial.println(response); // Uncomment this line to see the full response
+
+    if (connectionResult != 200)
+    {
+      if (debuggprint) {
+        Serial.print(F("Failed to connect to "));
+        Serial.println(webCaster);
+      }
+      return (false);
+    }
+    else
+    {
+      if (debuggprint) {
+        Serial.print(F("Connected to: "));
+        Serial.println(webCaster);
+      }
+      lastReceivedRTCM_ms = millis(); //Reset timeout
+    }
+  } //End attempt to connect
+
+  return (true);
+} // /beginClient
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+//Check for the arrival of any correction data. Push it to the GNSS.
+//Return false if: the connection has dropped, or if we receive no data for maxTimeBeforeHangup_ms
+bool processConnection()
+{
+  if (ntripClient.connected() == true) // Check that the connection is still open
+  {
+    // uint8_t rtcmData[512 * 4]; //Most incoming data is around 500 bytes but may be larger
+    uint8_t rtcmData[512 * 4]; //Most incoming data is around 500 bytes but may be larger
+    size_t rtcmCount = 0;
+
+    
+    // Lire et transmettre les trames RTCM
+
+    static enum {WAIT_SYNC, READ_LENGTH_1, READ_LENGTH_2, READ_PAYLOAD} stateRtcmTrame = WAIT_SYNC;
+    static uint16_t length = 0;
+    static uint16_t indexRtcmTrame = 0;
+    static uint8_t bufferRtcmTrame[2056];  // > buffer des ports serial
+
+    //Collect any available RTCM data
+    while (ntripClient.available())
+    {
+      // Serial.write(ntripClient.read()); //Pipe to serial port is fine but beware, it's a lot of binary data!
+      // rtcmData[rtcmCount++] = ntripClient.read();
+      // if (rtcmCount == sizeof(rtcmData))
+      //   break;
+      
+      //=-=-=-=-=-=-=- analyse rtcm trame =-=-=-=-=
+      uint8_t b = ntripClient.read();  //client.read();
+      rtcmData[rtcmCount++] = b;
+      totalData = totalData+1;
+
+      switch (stateRtcmTrame) {
+          case WAIT_SYNC:
+            if (b == 0xD3) {          //  Format de base d'une trame RTCM 3.x
+              bufferRtcmTrame[0] = b;
+              indexRtcmTrame = 1;
+              stateRtcmTrame = READ_LENGTH_1;
+            }
+            break;
+
+          case READ_LENGTH_1:
+            bufferRtcmTrame[indexRtcmTrame++] = b;
+            length = (b & 0x03) << 8;  // only 2 LSBs used
+            stateRtcmTrame = READ_LENGTH_2;
+            break;
+
+          case READ_LENGTH_2:
+            bufferRtcmTrame[indexRtcmTrame++] = b;
+            length |= b;
+            length += 3; // Include the 3-byte CRC at the end
+            stateRtcmTrame = READ_PAYLOAD;
+            if (debuggprint && length > 1023) {Serial.println("Trame RTCM TROP TROP LONGUEEEEEEEE");}
+            break;
+
+          case READ_PAYLOAD:
+            bufferRtcmTrame[indexRtcmTrame++] = b;
+            if (indexRtcmTrame >= length + 3) {
+              // Trame complète reçue !
+
+              // Vérification du CRC
+              uint32_t crc_calc = compute_crc24q(bufferRtcmTrame, indexRtcmTrame - 3);
+              uint32_t crc_recv = ((uint32_t)bufferRtcmTrame[indexRtcmTrame - 3] << 16) |
+                                  ((uint32_t)bufferRtcmTrame[indexRtcmTrame - 2] << 8) |
+                                  ((uint32_t)bufferRtcmTrame[indexRtcmTrame - 1]);
+
+              if (crc_calc == crc_recv) {
+                // CRC OK ➜ On envoie la trame au GNSS
+                //Serial.write(buffer, index);                          
+                timeStateCaster = millis();
+                GNSSSerial.write(bufferRtcmTrame, indexRtcmTrame); // envoi RTCM sur pour serie GNSS
+                parseRTCMMessage(bufferRtcmTrame, indexRtcmTrame);    // ajout pour compteur de trame RTCM
+              } else {
+                if (debuggprint) {Serial.println("Trame RTCM ignorée : CRC invalide");}
+              }
+              // Réinitialisation pour la prochaine trame
+              indexRtcmTrame = 0;
+              stateRtcmTrame = WAIT_SYNC;
+            }
+            break;
+      }
+    }
+
+    if (rtcmCount > 0)
+    {
+      lastReceivedRTCM_ms = millis();
+
+      //Push RTCM to GNSS module over I2C
+      //myGNSS.pushRawData(rtcmData, rtcmCount);
+      if (debuggprint) {
+        Serial.println();
+        Serial.print(F("Pushed "));
+        Serial.print(rtcmCount);
+        Serial.println(F(" RTCM bytes to GNSS "));
+      }
+    }
+    displayCounters();
+  }
+  else
+  {
+    if (debuggprint) {Serial.println(F("Connection dropped!"));}
+    return (false); // Connection has dropped - return false
+  }
+
+  //Timeout if we don't have new data for maxTimeBeforeHangup_ms
+  if ((millis() - lastReceivedRTCM_ms) > maxTimeBeforeHangup_ms)
+  {
+    if (debuggprint) {Serial.println(F("RTCM timeout!"));}
+    return (false); // Connection has timed out - return false
+  }
+
+  return (true);
+} // /processConnection
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+void closeConnection()
+{
+  if (ntripClient.connected() == true)
+  {
+    ntripClient.stop();
+  }
+  if (debuggprint) {Serial.println(F("Disconnected!"));}
+  ESP.restart(); //TODO:resolve, delay time, bug infinity reconnect ntrip if base RTK down
+}
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+//Return true if a key has been pressed
+bool keyPressed()
+{
+  if (Serial.available()) // Check for a new key press
+  {
+    delay(100); // Wait for any more keystrokes to arrive
+    while (Serial.available()) // Empty the serial buffer
+      Serial.read();
+    return (true);
+  }
+
+  return (false);
 }
