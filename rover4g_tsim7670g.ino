@@ -102,10 +102,10 @@ int BAT_PERIOD = 10;    // Interval pour envoi de l'état de la batterie (en sec
 #ifdef TINY_GSM_MODEM_SIM7600
   // Configuration des broches pour modele original SIM7600
   #define UART_BAUD 115200   // for modem only
-  #define MODEM_RX 26
-  #define MODEM_TX 27
+  #define PIN_RX 26
+  #define PIN_TX 27
   #define MODEM_PWRKEY 4
-  #define MODEM_POWERON 25
+  #define MODEM_POWER 25
 #elif defined(TINY_GSM_MODEM_A7670)
   #define UART_BAUD 115200   // for modem only
   #define PIN_RX       27
