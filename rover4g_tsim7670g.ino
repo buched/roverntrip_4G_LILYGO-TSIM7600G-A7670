@@ -298,6 +298,7 @@ void handleRoot() {
       <head>
         <title>RTCM Monitor</title>
         <meta http-equiv='refresh' content=''>
+        <link rel="shortcut icon" href="https://map.centipede-rtk.org/assets/favicon/favicon.ico">
         <style>
           body { font-family: sans-serif; padding: 20px; }
           table { border-collapse: collapse; }
@@ -340,7 +341,7 @@ void handleData() {
 }
 
 void handleConfig() {
-  String html = "<html><head><title>Configuration - Rover GNSS</title><meta http-equiv='Content-Type' content='text/html; charset=utf-8'></head><body><h1>Config NTRIP et WiFi</h1>";
+  String html = "<html><head><title>Configuration - Rover GNSS</title><meta http-equiv='Content-Type' content='text/html; charset=utf-8'><style>fieldset { background-color: rgb(214 229 231 /35%); }</style></head><body><h1>Config NTRIP et WiFi</h1>";
   html += "<form action='/setconfig' method='get'>";
   html += "<fieldset><legend>Ntrip</legend>";
   html += "Caster Host: <input name='caster' value='" + webCaster + "'><br>";
