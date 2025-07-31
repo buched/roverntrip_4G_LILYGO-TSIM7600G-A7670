@@ -11,8 +11,8 @@ uint16_t webPort = 2101;
 String webMount = "NEAR";
 String webUser = "centipede";
 String webPW = "centipede";
-String webSSID = "";
-String webSSIDPW = "";
+String webSSID = "Freebox-A58F2A";
+String webSSIDPW = "obpugnati&";
 String webAPN    = "sl2sfr";
 String webSIMPASS = "";
 String webSIMUSER = "";
@@ -164,21 +164,27 @@ const char gprsPass[] = "";
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <Preferences.h>
+
+bool tcpConnected = false;
 Preferences prefs;
 
 #define MODE_UDP      0
 #define MODE_BT       1
 #define MODE_BLE      2
+#define MODE_TCP      3
 #define PIN_MODE_0    14
 #define PIN_MODE_1    15
 int outputMode = MODE_UDP;
 
 WiFiUDP udp;
+
 BluetoothSerial SerialBT;
 BLEServer* pServer = nullptr;
 BLECharacteristic* pTxCharacteristic = nullptr;
 bool deviceConnected = false;
 
+//const char* sta_ssid = "Freebox-A58F2A";
+//const char* sta_pass = "obpugnati&";
 const char* ap_ssid = "NTRIP_AP";
 const char* ap_pass = "12345678";
 //IPAddress udpRemoteIp(192,168,1,255); // en mode AP, broadcast
@@ -251,7 +257,8 @@ const unsigned long maxTimeBeforeHangup_ms = 10000UL; //If we fail to get a comp
 const char* ssid = "RTCM_Monitor";
 const char* password = "gemini1779";
 WebServer server(80);
-
+WiFiServer tcpServer(2102);
+WiFiClient tcpClient;
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
@@ -517,7 +524,11 @@ void setupOutputMode() {
   pinMode(PIN_MODE_1, INPUT_PULLUP);
   int m0 = digitalRead(PIN_MODE_0);
   int m1 = digitalRead(PIN_MODE_1);
-    if (!m0 && m1) 
+    if (m0 && m1) 
+      {
+        outputMode = MODE_UDP;
+      }
+    else if (!m0 && m1) 
       {
         outputMode = MODE_BT;
       }
@@ -527,7 +538,7 @@ void setupOutputMode() {
       }
     else if (!m0 && !m1)
       {
-        outputMode = MODE_UDP;
+        outputMode = MODE_TCP;
       }
     else
       {
@@ -568,6 +579,10 @@ void sendOutput(const uint8_t* buf, size_t len) {
   } else if (outputMode == MODE_BLE && deviceConnected && pTxCharacteristic) {
     pTxCharacteristic->setValue((uint8_t*)buf, len);
     pTxCharacteristic->notify();
+  }else if (outputMode == MODE_TCP) {
+    if (tcpClient && tcpClient.connected()) {
+      tcpClient.write(buf, len);
+    }
   }
 }
 
@@ -634,6 +649,21 @@ void setup()
     {
       setupBLE();
       Serial.println("Mode selectionne: BLE (PIN1=LOW, PIN2=HIGH)");
+    }
+  else if (outputMode == MODE_TCP)
+    {
+      initWifiUdpAuto();
+      delay(2000);
+      if (WiFi.status() != WL_CONNECTED)
+        {
+          Serial.println("WiFi non connecté, impossible de démarrer le serveur TCP !");
+        } 
+      else
+        {
+          tcpServer.begin();
+          tcpServer.setNoDelay(true);  // Réduction latence
+          Serial.println("Serveur TCP démarré sur le port 2102");
+        }
     }
 
 // GNSS Serial 
@@ -759,10 +789,39 @@ void loop()
   {
     String s = GNSSSerial.readStringUntil('\n');
     //Serial.println(s); // Empty the serial buffer
-    if (s.startsWith("$GNGGA") || s.startsWith("$GPGGA")) {
-        ggaDefaut = s;
-        ggaOk = true;
-    }
+    if (s.startsWith("$GNGGA") || s.startsWith("$GPGGA"))
+      {
+          ggaDefaut = s;
+          ggaOk = true;
+      }
+    if (s.startsWith("$GNGGA") || s.startsWith("$GPGGA") || s.startsWith("$GPRMC") || s.startsWith("$GNRMC") || s.startsWith("$GPVTG") || s.startsWith("$NVTG") || s.startsWith("$GPZDA") || s.startsWith("$NZDA"))
+      {
+          if (outputMode == MODE_TCP)
+          {
+            // Si pas de client connecté, en accepter un nouveau
+            if (!tcpClient || !tcpClient.connected())
+            {
+              tcpClient = tcpServer.available();
+              if (tcpClient)
+                {
+                  tcpConnected = true;
+                  Serial.println("Client TCP connecté !");
+                  // Optionnel : send hello ou info
+                }
+              else
+                {
+                  tcpConnected = false;
+                }
+            }
+            // Si déconnexion :
+            if (tcpConnected && !tcpClient.connected())
+              {
+                Serial.println("Client TCP déconnecté !");
+                tcpClient.stop();
+                tcpConnected = false;
+              }
+          }
+      }
     sendOutput((const uint8_t*)s.c_str(), s.length());
   }
 
