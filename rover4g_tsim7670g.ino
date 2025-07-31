@@ -11,8 +11,8 @@ uint16_t webPort = 2101;
 String webMount = "NEAR";
 String webUser = "centipede";
 String webPW = "centipede";
-String webSSID = "Freebox-A58F2A";
-String webSSIDPW = "obpugnati&";
+String webSSID = "";
+String webSSIDPW = "";
 String webAPN    = "sl2sfr";
 String webSIMPASS = "";
 String webSIMUSER = "";
@@ -183,8 +183,6 @@ BLEServer* pServer = nullptr;
 BLECharacteristic* pTxCharacteristic = nullptr;
 bool deviceConnected = false;
 
-//const char* sta_ssid = "Freebox-A58F2A";
-//const char* sta_pass = "obpugnati&";
 const char* ap_ssid = "NTRIP_AP";
 const char* ap_pass = "12345678";
 //IPAddress udpRemoteIp(192,168,1,255); // en mode AP, broadcast
