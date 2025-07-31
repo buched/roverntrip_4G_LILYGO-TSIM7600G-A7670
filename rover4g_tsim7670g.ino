@@ -13,6 +13,7 @@ String webUser = "centipede";
 String webPW = "centipede";
 String webSSID = "";
 String webSSIDPW = "";
+uint16_t webTCPPort = 2102;
 String webAPN    = "sl2sfr";
 String webSIMPASS = "";
 String webSIMUSER = "";
@@ -255,7 +256,8 @@ const unsigned long maxTimeBeforeHangup_ms = 10000UL; //If we fail to get a comp
 const char* ssid = "RTCM_Monitor";
 const char* password = "gemini1779";
 WebServer server(80);
-WiFiServer tcpServer(2102);
+//WiFiServer tcpServer(2102);
+WiFiServer *tcpServer = nullptr;
 WiFiClient tcpClient;
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
@@ -287,6 +289,7 @@ void loadPreferences() {
   webPW      = prefs.getString("pass",    webPW);
   webSSID    = prefs.getString("ssid",    webSSID);
   webSSIDPW  = prefs.getString("ssidpw",  webSSIDPW);
+  webTCPPort = prefs.getUShort("tcpport", webTCPPort);
   webAPN     = prefs.getString("apn", webAPN);
   webSIMPASS  = prefs.getString("simpass", webSIMPASS);
   webSIMUSER = prefs.getString("simuser", webSIMUSER);
@@ -380,6 +383,9 @@ void handleConfig() {
   html += "WiFi SSID: <input name='ssid' value='" + webSSID + "'><br>";
   html += "WiFi Password: <input name='ssidpw' type='password' value='" + webSSIDPW + "'><br>";
   html += "</fieldset>";
+  html += "<fieldset><legend>TCP Output</legend>";
+  html += "TCP Port: <input name='tcpport' value='" + String(webTCPPort) + "'><br>";
+  html += "</fieldset>";
   html += "<fieldset><legend>4G/LTE SIM</legend>";
   html += "APN: <input name='apn' value='" + webAPN + "'><br>";
   html += "PIN SIM: <input name='simpass' value='" + webSIMPASS + "'><br>";
@@ -407,6 +413,7 @@ void handleSetConfig() {
   if (server.hasArg("ntrippw"))   webPW      = server.arg("ntrippw");
   if (server.hasArg("ssid"))      webSSID    = server.arg("ssid");
   if (server.hasArg("ssidpw"))    webSSIDPW  = server.arg("ssidpw");
+  if (server.hasArg("tcpport"))   webTCPPort = server.arg("tcpport").toInt();
   if (server.hasArg("apn"))       webAPN     = server.arg("apn");
   if (server.hasArg("simpass"))   webSIMPASS = server.arg("simpass");
   if (server.hasArg("simuser"))   webSIMUSER = server.arg("simuser");
@@ -426,6 +433,7 @@ void savePreferences() {
   prefs.putString("pass",    webPW);
   prefs.putString("ssid",    webSSID);
   prefs.putString("ssidpw",  webSSIDPW);
+  prefs.putUShort("tcpport", webTCPPort);
   prefs.putString("apn", webAPN);
   prefs.putString("simpass", webSIMPASS);
   prefs.putString("simuser", webSIMUSER);
@@ -524,7 +532,8 @@ void setupOutputMode() {
   int m1 = digitalRead(PIN_MODE_1);
     if (m0 && m1) 
       {
-        outputMode = MODE_UDP;
+        outputMode = MODE_TCP;
+        //outputMode = MODE_UDP;
       }
     else if (!m0 && m1) 
       {
@@ -658,8 +667,9 @@ void setup()
         } 
       else
         {
-          tcpServer.begin();
-          tcpServer.setNoDelay(true);  // Réduction latence
+          tcpServer = new WiFiServer(webTCPPort);
+          tcpServer->begin();
+          tcpServer->setNoDelay(true);  // Réduction latence
           Serial.println("Serveur TCP démarré sur le port 2102");
         }
     }
@@ -799,7 +809,7 @@ void loop()
             // Si pas de client connecté, en accepter un nouveau
             if (!tcpClient || !tcpClient.connected())
             {
-              tcpClient = tcpServer.available();
+              tcpClient = tcpServer->available();
               if (tcpClient)
                 {
                   tcpConnected = true;
