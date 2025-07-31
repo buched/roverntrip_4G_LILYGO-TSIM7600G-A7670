@@ -1,7 +1,8 @@
-// base du code : Julien ANCELIN
+// base du code : Julien ANCELIN. ajout du mode de transmission UDP,BT,BLE et TCP : Buched, interface de configuration web
+
 // Select your modem:
-//#define TINY_GSM_MODEM_SIM7600
-#define TINY_GSM_MODEM_A7670
+//#define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
+#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
 
 bool debuggprint = true;
 
@@ -22,11 +23,8 @@ unsigned long lastGGA = 0;
 unsigned long timeSendGGA = 10000;
 
 
-String ggaDefaut = "";  // HNVCAD position GGA
+String ggaDefaut = "";
 
-//String ggaDefaut = "$GNGGA,131133.706,4907.407,N,00393.600,E,1,12,1.0,0.0,M,0.0,M,,*62";  // base LRSEC vers vivaise tri bandes
-
-// Décodeur simple de trames RTCM 3.x avec compteur de type ID
 #define MAX_IDS 50
 struct RTCM_ID_Counter {
   uint16_t id;
@@ -45,12 +43,6 @@ unsigned long countRtcm = 0;
 unsigned long startData = 0;
 unsigned long totalData = 0;
 
-// unsigned long rtcmCount = 0;
-// unsigned long id1004Count = 0;
-// char rtcmBuffer[1024];
-//unsigned long rtcmTimeOut = 15000;
-
-// GNSS acquisition Frequency ( Hz )
 int GNSS_FREQ = 1;
 
 // DEEP SLEEP CONFIGURATION
@@ -186,7 +178,6 @@ bool deviceConnected = false;
 
 const char* ap_ssid = "NTRIP_AP";
 const char* ap_pass = "12345678";
-//IPAddress udpRemoteIp(192,168,1,255); // en mode AP, broadcast
 IPAddress udpRemoteIp;
 uint16_t udpRemotePort = 9999;
 
@@ -553,8 +544,10 @@ void setupOutputMode() {
 }
 
 void setupBTSerial() {
-  Serial.println("Mode selectionne: BT (PIN1=HIGH, PIN2=LOW)");
-  SerialBT.begin("ESP32_NTRIP");
+WiFi.disconnect(true);  // Déconnecte et désactive le wifi au cas ou
+WiFi.mode(WIFI_OFF);    // Éteint la pile WiFi
+delay(100);
+SerialBT.begin("ESP32_NTRIP");
   Serial.println("Bluetooth SPP démarré");
 }
 
@@ -580,19 +573,23 @@ void sendOutput(const uint8_t* buf, size_t len) {
     udp.beginPacket(udpRemoteIp, udpRemotePort);
     udp.write(buf, len);
     udp.endPacket();
-  } else if (outputMode == MODE_BT) {
-    SerialBT.write(buf, len);
-  } else if (outputMode == MODE_BLE && deviceConnected && pTxCharacteristic) {
-    pTxCharacteristic->setValue((uint8_t*)buf, len);
-    pTxCharacteristic->notify();
-  }else if (outputMode == MODE_TCP) {
+  }
+  else if (outputMode == MODE_BT)
+    {
+      SerialBT.write(buf, len);
+    }
+  else if (outputMode == MODE_BLE && deviceConnected && pTxCharacteristic)
+    {
+      pTxCharacteristic->setValue((uint8_t*)buf, len);
+      pTxCharacteristic->notify();
+    }
+  else if (outputMode == MODE_TCP) {
     if (tcpClient && tcpClient.connected()) {
       tcpClient.write(buf, len);
     }
   }
 }
 
-// Ajouter au début du setup (avant le GNSS, modem, etc)
 void initWifiUdpAuto() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(webSSID.c_str(), webSSIDPW.c_str());
@@ -617,7 +614,6 @@ void initWifiUdpAuto() {
 
     Serial.print("Broadcast UDP calculé : "); Serial.println(udpRemoteIp);
     udp.begin(udpRemotePort);
-    // cible UDP : peut être un PC du LAN, mobile, ou broadcast ex: 192.168.x.255
   } else {
     Serial.println("\nImpossible de joindre le WiFi, création du point d'accès...");
     WiFi.mode(WIFI_AP);
@@ -625,7 +621,7 @@ void initWifiUdpAuto() {
     Serial.print("AP démarré : "); Serial.println(WiFi.softAPIP());
     udpRemoteIp = IPAddress(192, 168, 4, 255);
     Serial.print("Broadcast UDP AP : "); Serial.println(udpRemoteIp);
-    udp.begin(udpRemotePort); // tu peux garder .255 pour broadcast sur AP local
+    udp.begin(udpRemotePort);
   }
 }
 
@@ -633,45 +629,12 @@ void initWifiUdpAuto() {
 //=-=-=-=-=-=-=-=-=-=-=-=-=
 void setup()
 {
-  prefs.begin("ntripcfg", false); // Pour créer l'espace si première utilisation
+  prefs.begin("ntripcfg", false);
   prefs.end();
   loadPreferences();
   init_crc24q_table();
-  //Serial.begin(460800);
   Serial.begin(115200);  //baudrate maxi pour AOG
   delay(200);
-  setupOutputMode(); // <- Choix mode selon GPIO
-  if (outputMode == MODE_UDP)
-    {
-      initWifiUdpAuto();
-      Serial.println("Mode selectionne: UDP (PIN1=LOW, PIN2=LOW)");
-    }
-  else if (outputMode == MODE_BT)
-    {
-      setupBTSerial();
-      Serial.println("Mode selectionne: BLE (PIN1=LOW, PIN2=HIGH)");
-    }
-  else if (outputMode == MODE_BLE)
-    {
-      setupBLE();
-      Serial.println("Mode selectionne: BLE (PIN1=LOW, PIN2=HIGH)");
-    }
-  else if (outputMode == MODE_TCP)
-    {
-      initWifiUdpAuto();
-      delay(2000);
-      if (WiFi.status() != WL_CONNECTED)
-        {
-          Serial.println("WiFi non connecté, impossible de démarrer le serveur TCP !");
-        } 
-      else
-        {
-          tcpServer = new WiFiServer(webTCPPort);
-          tcpServer->begin();
-          tcpServer->setNoDelay(true);  // Réduction latence
-          Serial.println("Serveur TCP démarré sur le port 2102");
-        }
-    }
 
 // GNSS Serial 
   delay(10);
@@ -709,23 +672,10 @@ void setup()
   #error "Aucun modele selectionne! Decommenter un #define MODEL_xxx"
 #endif
 
-  // Web server routes
-  server.on("/", handleRoot);
-  server.on("/data", handleData);
-  server.on("/config", handleConfig);
-  server.on("/setconfig", handleSetConfig);
-  server.on("/reboot", HTTP_POST, handleReboot);
-  server.begin();
-  delay(1000);
-
   Serial.println("Initializing modem...");
   if (!modem.init()) {
     Serial.println("Failed to restart modem, attempting to continue without restarting");
   }
-  Serial.print("APN="); Serial.print(webAPN);
-  Serial.print(", SIMUSER="); Serial.print(webSIMUSER);
-  Serial.print(", SIMPASS="); Serial.print(webSIMPASS);
-  Serial.println("");
   delay(1000);
   Serial.printf("Initialisation modem");
   if (!modem.restart()) {
@@ -743,8 +693,7 @@ void setup()
   int lastNetworkAttemps = millis();
   int now = millis(); 
 
-  // Testing 4G connection during ACQUISION_PERIOD_4G ( second ), if not connected after that, DeepSleep is launched
-  while(!modem.waitForNetwork() && ( now - lastNetworkAttemps < ACQUISION_PERIOD_4G ) ) {
+   while(!modem.waitForNetwork() && ( now - lastNetworkAttemps < ACQUISION_PERIOD_4G ) ) {
   //if (!modem.waitForNetwork()) {
     Serial.println("fail to find network, waiting 10sec before retry");
     delay(10000);
@@ -773,24 +722,68 @@ void setup()
 
   now = millis();
   lastNetworkAttemps = millis();
-  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
+  setupOutputMode();
 
+  if (outputMode == MODE_UDP)
+    {
+      initWifiUdpAuto();
+      Serial.println("Mode selectionne: UDP (PIN1=LOW, PIN2=LOW)");
+    }
+  else if (outputMode == MODE_BT)
+    {
+      setupBTSerial();
+      Serial.println("Mode selectionne: BT (PIN1=LOW, PIN2=HIGH)");
+    }
+  else if (outputMode == MODE_BLE)
+    {
+      setupBLE();
+      Serial.println("Mode selectionne: BLE (PIN1=HIGH, PIN2=LOW)");
+    }
+  else if (outputMode == MODE_TCP)
+    {
+      initWifiUdpAuto();
+      delay(2000);
+      if (WiFi.status() != WL_CONNECTED)
+        {
+          Serial.println("WiFi non connecté, impossible de démarrer le serveur TCP !");
+        } 
+      else
+        {
+          tcpServer = new WiFiServer(webTCPPort);
+          tcpServer->begin();
+          tcpServer->setNoDelay(true);
+          Serial.println("Serveur TCP démarré sur le port 2102");
+        }
+    }
 
-  while (Serial.available()) // Empty the serial buffer
+if (outputMode != MODE_BT && outputMode != MODE_BLE)
+  {
+    // Web server routes
+    server.on("/", handleRoot);
+    server.on("/data", handleData);
+    server.on("/config", handleConfig);
+    server.on("/setconfig", handleSetConfig);
+    server.on("/reboot", HTTP_POST, handleReboot);
+    server.begin();
+    delay(1000);
+  }
+
+while (Serial.available()) // Empty the serial buffer
     Serial.read();
 }
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=- LOOP  =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 void loop()
 {
-  server.handleClient();    // ecoute sur les entre WEB
+  server.handleClient();
   static unsigned long lastBatRead = 0;
   if (millis() - lastBatRead > 5000) {
     readBatteryPercent();
     lastBatRead = millis();
   }
   static bool ggaOk = false;
+
   // =-=-=-=-= GNSS READ STATE =-=-=-=-=
   if (GNSSSerial.available()) // Check for a new key press
   {
@@ -875,8 +868,6 @@ void loop()
     //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
     case push_data_and_wait_for_keypress:
-      // If the connection has dropped or timed out, or if the user has pressed a key
-      //if ((processConnection() == false) || (keyPressed()))
       if ((processConnection() == false))
       {
         state = close_connection; // Move on
@@ -895,8 +886,6 @@ void loop()
     //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
     case waiting_for_keypress:
-      // If the connection has dropped or timed out, or if the user has pressed a key
-      //if (keyPressed())
       state = open_connection; // Move on
       break;
   }
@@ -1091,15 +1080,13 @@ bool beginClient()
       }
       lastReceivedRTCM_ms = millis(); //Reset timeout
     }
-  } //End attempt to connect
+  }
 
   return (true);
 } // /beginClient
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
-//Check for the arrival of any correction data. Push it to the GNSS.
-//Return false if: the connection has dropped, or if we receive no data for maxTimeBeforeHangup_ms
 bool processConnection()
 {
   if (ntripClient.connected() == true) // Check that the connection is still open
@@ -1119,11 +1106,6 @@ bool processConnection()
     //Collect any available RTCM data
     while (ntripClient.available())
     {
-      // Serial.write(ntripClient.read()); //Pipe to serial port is fine but beware, it's a lot of binary data!
-      // rtcmData[rtcmCount++] = ntripClient.read();
-      // if (rtcmCount == sizeof(rtcmData))
-      //   break;
-      
       //=-=-=-=-=-=-=- analyse rtcm trame =-=-=-=-=
       uint8_t b = ntripClient.read();  //client.read();
       rtcmData[rtcmCount++] = b;
@@ -1164,8 +1146,6 @@ bool processConnection()
                                   ((uint32_t)bufferRtcmTrame[indexRtcmTrame - 1]);
 
               if (crc_calc == crc_recv) {
-                // CRC OK ➜ On envoie la trame au GNSS
-                //Serial.write(buffer, index);                          
                 timeStateCaster = millis();
                 GNSSSerial.write(bufferRtcmTrame, indexRtcmTrame); // envoi RTCM sur pour serie GNSS
                 parseRTCMMessage(bufferRtcmTrame, indexRtcmTrame);    // ajout pour compteur de trame RTCM
@@ -1183,9 +1163,6 @@ bool processConnection()
     if (rtcmCount > 0)
     {
       lastReceivedRTCM_ms = millis();
-
-      //Push RTCM to GNSS module over I2C
-      //myGNSS.pushRawData(rtcmData, rtcmCount);
       if (debuggprint) {
         Serial.println();
         Serial.print(F("Pushed "));
