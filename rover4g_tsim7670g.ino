@@ -532,8 +532,7 @@ void setupOutputMode() {
   int m1 = digitalRead(PIN_MODE_1);
     if (m0 && m1) 
       {
-        outputMode = MODE_TCP;
-        //outputMode = MODE_UDP;
+        outputMode = MODE_UDP;
       }
     else if (!m0 && m1) 
       {
