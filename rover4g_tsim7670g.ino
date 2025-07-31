@@ -2,7 +2,7 @@
 
 // Select your modem:
 //#define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
-#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
+#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549  https://fr.aliexpress.com/item/1005003036514769.html
 
 bool debuggprint = true;
 
