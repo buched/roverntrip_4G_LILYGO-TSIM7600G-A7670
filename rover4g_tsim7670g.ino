@@ -254,7 +254,7 @@ const unsigned long maxTimeBeforeHangup_ms = 10000UL; //If we fail to get a comp
 #include <WiFi.h>
 #include <WebServer.h>
 const char* ssid = "RTCM_Monitor";
-const char* password = "gemini1779";
+const char* password = "";
 WebServer server(80);
 //WiFiServer tcpServer(2102);
 WiFiServer *tcpServer = nullptr;
