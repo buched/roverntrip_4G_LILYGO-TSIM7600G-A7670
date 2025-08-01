@@ -1,8 +1,8 @@
 // base du code : Julien ANCELIN. ajout du mode de transmission UDP,BT,BLE et TCP : Buched, interface de configuration web
 
 // Select your modem:
-//#define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
-#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549  https://fr.aliexpress.com/item/1005003036514769.html
+#define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
+//#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
 
 bool debuggprint = true;
 
@@ -129,7 +129,7 @@ HardwareSerial GNSSSerial(2);      // UART2 - GNSS
 
 #define GNSSBAUD 460800
 #define GNSS_TX    32 //=> vers RX LG580P
-#define GNSS_RX    34 // => vers TX LG580P
+#define GNSS_RX    33 // => vers TX LG580P
 
 // See all AT commands, if wanted
 //#define DUMP_AT_COMMANDS
@@ -625,26 +625,9 @@ void initWifiUdpAuto() {
   }
 }
 
-
-//=-=-=-=-=-=-=-=-=-=-=-=-=
-void setup()
+void poweronmodem()
 {
-  prefs.begin("ntripcfg", false);
-  prefs.end();
-  loadPreferences();
-  init_crc24q_table();
-  Serial.begin(115200);  //baudrate maxi pour AOG
-  delay(200);
-
-// GNSS Serial 
-  delay(10);
-    GNSSSerial.begin(GNSSBAUD, SERIAL_8N1, GNSS_RX, GNSS_TX);
-  delay(1000);
-
-//GSM-----------------------------
-  delay(10);
-  SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
-#ifdef TINY_GSM_MODEM_SIM7600
+  #ifdef TINY_GSM_MODEM_SIM7600
   // Sequence pour SIM7600
   pinMode(MODEM_PWRKEY, OUTPUT);
   pinMode(MODEM_POWER, OUTPUT);
@@ -671,17 +654,45 @@ void setup()
 #else
   #error "Aucun modele selectionne! Decommenter un #define MODEL_xxx"
 #endif
+}
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=
+void setup()
+{
+  prefs.begin("ntripcfg", false);
+  prefs.end();
+  loadPreferences();
+  init_crc24q_table();
+  Serial.begin(115200);  //baudrate maxi pour AOG
+  delay(200);
+
+// GNSS Serial 
+  delay(10);
+    GNSSSerial.begin(GNSSBAUD, SERIAL_8N1, GNSS_RX, GNSS_TX);
+  delay(1000);
+
+//GSM-----------------------------
+  delay(10);
+  SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
+   delay(1500);
+poweronmodem();
 
   Serial.println("Initializing modem...");
   if (!modem.init()) {
     Serial.println("Failed to restart modem, attempting to continue without restarting");
   }
   delay(1000);
-  Serial.printf("Initialisation modem");
+
+#ifdef TINY_GSM_MODEM_A7670
+  Serial.printf("restart modem");
   if (!modem.restart()) {
     Serial.println("modem.restart() echoue");
     while (true);
   }
+#else
+  Serial.println("on continu le boot");
+#endif
+
   delay(1000);
   if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
     Serial.println("fail");
