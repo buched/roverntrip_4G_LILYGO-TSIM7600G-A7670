@@ -43,7 +43,24 @@ unsigned long countRtcm = 0;
 unsigned long startData = 0;
 unsigned long totalData = 0;
 
+int GNSS_FREQ = 1;
+
+// DEEP SLEEP CONFIGURATION
+RTC_DATA_ATTR int bootCount = 0;    // Compte le nombre de reboot. 
+int nb_DeepSleep_until_Reboot = 10; // nb de deepsleep avant reboot complet.
+bool DEEP_SLEEP_ACTIVATED = false; //true;     // True = DeepSleep sinon DeepSleep ( off ) captation en continue
+int TIME_TO_SLEEP = 5; //480 // temps de repos en deepsleep.
+int RTK_ACQUISITION_PERIOD = 30; //120; // Temps ( en seconde ) pendant lequel on doit capter de la donnée en RTK ( secondes )
+int RTK_MAX_RESEARCH = 30;//120; // Temps max pendant lequel le dispositif recherche du RTK ( secondes )
+#define uS_TO_S_FACTOR 1000000
+RTC_DATA_ATTR int lastPeriodRecord = 0;
 int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va chercher le network 4G avant de faire un deepsleep( TIME_TO_SLEEP )
+int ACQUISION_PERIOD_MQTT = 30000; // Temps d'acquisition pendant lequel on va chercher le serveur mqtt
+int ACQUISION_PERIOD_GNSS = 30000; // Temps d'acquisition pendant lequel on va chercher le serveur mqtt
+
+// BAT
+int BAT_PERIOD = 10;    // Interval pour envoi de l'état de la batterie (en seconde )
+
 
 /*
 =============================================================================================
@@ -82,6 +99,7 @@ int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va cher
   #define PIN_TX 27
   #define MODEM_PWRKEY 4
   #define MODEM_POWER 25
+  #define BAT_ADC_PIN 35
 #elif defined(TINY_GSM_MODEM_A7670)
   #define UART_BAUD 115200   // for modem only
   #define PIN_RX       27
@@ -89,6 +107,7 @@ int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va cher
   #define MODEM_PWRKEY   4
   #define MODEM_DTR      25
   #define BOARD_POWERON  12
+  #define BAT_ADC_PIN 35
 #endif
 //#define LED_PIN   12
 //#define POWER_PIN 25
@@ -97,7 +116,6 @@ int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va cher
 //#include <esp_adc_cal.h>
 float lastBatPercent = 0.0;
 float lastBatVoltage = 0.0;
-#define BAT_ADC_PIN 35
 int vref = 1100;
 uint32_t timeStamp = 0;
 
@@ -237,19 +255,23 @@ unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
 float readBatteryPercent() {
-  uint16_t adcRaw = analogRead(BAT_ADC_PIN);
-  // Ajuste le facteur en fonction de ton diviseur de tension
-  float voltage = ((float)adcRaw / 4095.0) * 3.3;  // 12 bits ADC, Vref 3.3 V
+  #ifdef TINY_GSM_MODEM_SIM7600
+    Serial.print("a venir");
+  #elif defined(TINY_GSM_MODEM_A7670)
+    uint16_t adcRaw = analogRead(BAT_ADC_PIN);
+    // Ajuste le facteur en fonction de ton diviseur de tension
+    float voltage = ((float)adcRaw / 4095.0) * 3.3;  // 12 bits ADC, Vref 3.3 V
 
-  // Si diviseur, par exemple 100k/100k (x2) : voltage *= 2;
-  voltage *= 2.0;
-lastBatVoltage = voltage;
-  // Bornes typiques LiPo
-  float percent = (voltage - 3.0) / (4.2 - 3.0) * 100.0;
-  if (percent < 0) percent = 0;
-  if (percent > 100) percent = 100;
-  lastBatPercent = percent;
-  return percent;
+    // Si diviseur, par exemple 100k/100k (x2) : voltage *= 2;
+    voltage *= 2.0;
+    lastBatVoltage = voltage;
+    // Bornes typiques LiPo
+    float percent = (voltage - 3.0) / (4.2 - 3.0) * 100.0;
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    lastBatPercent = percent;
+    return percent;
+#endif
 }
 
 
@@ -771,11 +793,14 @@ while (Serial.available()) // Empty the serial buffer
 void loop()
 {
   server.handleClient();
+    #ifdef TINY_GSM_MODEM_SIM7600
+  #elif defined(TINY_GSM_MODEM_A7670)
   static unsigned long lastBatRead = 0;
   if (millis() - lastBatRead > 5000) {
     readBatteryPercent();
     lastBatRead = millis();
   }
+#endif
   static bool ggaOk = false;
 
   // =-=-=-=-= GNSS READ STATE =-=-=-=-=
