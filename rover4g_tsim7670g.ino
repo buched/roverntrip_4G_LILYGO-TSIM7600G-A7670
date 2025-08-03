@@ -1,5 +1,34 @@
 // base du code : Julien ANCELIN. ajout du mode de transmission UDP,BT,BLE et TCP : Buched, interface de configuration web
+/*
+=============================================================================================
+* By: HnV CAD / Herve JOLIVET 
+  Date: June 17th, 2025
+  License: MIT.
 
+* Souce: https://github.com/jancelin/physalia
+* By: INRAE / Julien Ancelin & Romain Tourte, Quentin Lesniack
+* License: GNU Affero General Public License v3.0
+
+* Object: 
+  - Connect to 4g LTE network and get RTCM data from CentipedeRTK caster as a Client with web interface control / compteur 
+  - Transmit Lat long positions to the caster for base selection automatique
+
+* Material:
+  - ESP32 with Pcie + RJ45: Lilygo T-pcie  =-=-= INFO : LILYGO ® Carte Bluetooth Wifi TTGO T-Internet-COM ESP32 pour Module IOT Ethernet T-PCIE avec emplacement pour carte SIM TF connecteur type-c    
+      https://fr.aliexpress.com/item/1005003547423153.html?spm=a2g0o.order_detail.order_detail_item.3.4eeb7d56Nkpwmr&gatewayAdapt=glo2fra
+  - LTE 4G: only SIM T-PCIE A7670E not GPS =-=-=  INFO : LILYGO® TTGO T-PCIE A7670 4G Carte de Développement ESP32-WROVER-B WIFI Bluetooth epiSeries Composable Tech A7670E A7670SA persévérance 101
+      https://www.tinytronics.nl/shop/en/communication-and-signals/wireless/gps/modules/lilygo-ttgo-t-pcie-sim7600g-h-expansion-module
+
+  - F9P: drotek DP0601                    https://store-drotek.com/891-rtk-zed-f9p-gnss.html
+  - relay: 5V 1-channel high-active       https://www.tinytronics.nl/shop/en/switches/relays/5v-relay-1-channel-high-active
+  - battery: Li-Po Battery 3.7V 2000mAh   https://www.tinytronics.nl/shop/en/power/batteries/li-po/li-po-accu-3.7v-2000mah
+  
+* GNSS code:
+  By: SparkFun Electronics / Nathan Seidle & Paul Clark
+  Date: January 13th, 2022
+  License: MIT.
+=============================================================================================
+*/
 // Select your modem:
 #define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
 //#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
@@ -43,55 +72,8 @@ unsigned long countRtcm = 0;
 unsigned long startData = 0;
 unsigned long totalData = 0;
 
-int GNSS_FREQ = 1;
-
-// DEEP SLEEP CONFIGURATION
-RTC_DATA_ATTR int bootCount = 0;    // Compte le nombre de reboot. 
-int nb_DeepSleep_until_Reboot = 10; // nb de deepsleep avant reboot complet.
-bool DEEP_SLEEP_ACTIVATED = false; //true;     // True = DeepSleep sinon DeepSleep ( off ) captation en continue
-int TIME_TO_SLEEP = 5; //480 // temps de repos en deepsleep.
-int RTK_ACQUISITION_PERIOD = 30; //120; // Temps ( en seconde ) pendant lequel on doit capter de la donnée en RTK ( secondes )
-int RTK_MAX_RESEARCH = 30;//120; // Temps max pendant lequel le dispositif recherche du RTK ( secondes )
-#define uS_TO_S_FACTOR 1000000
-RTC_DATA_ATTR int lastPeriodRecord = 0;
 int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va chercher le network 4G avant de faire un deepsleep( TIME_TO_SLEEP )
-int ACQUISION_PERIOD_MQTT = 30000; // Temps d'acquisition pendant lequel on va chercher le serveur mqtt
-int ACQUISION_PERIOD_GNSS = 30000; // Temps d'acquisition pendant lequel on va chercher le serveur mqtt
 
-// BAT
-int BAT_PERIOD = 10;    // Interval pour envoi de l'état de la batterie (en seconde )
-
-
-/*
-=============================================================================================
-* By: HnV CAD / Herve JOLIVET 
-  Date: June 17th, 2025
-  License: MIT.
-
-* Souce: https://github.com/jancelin/physalia
-* By: INRAE / Julien Ancelin & Romain Tourte, Quentin Lesniack
-* License: GNU Affero General Public License v3.0
-
-* Object: 
-  - Connect to 4g LTE network and get RTCM data from CentipedeRTK caster as a Client with web interface control / compteur 
-  - Transmit Lat long positions to the caster for base selection automatique
-
-* Material:
-  - ESP32 with Pcie + RJ45: Lilygo T-pcie  =-=-= INFO : LILYGO ® Carte Bluetooth Wifi TTGO T-Internet-COM ESP32 pour Module IOT Ethernet T-PCIE avec emplacement pour carte SIM TF connecteur type-c    
-      https://fr.aliexpress.com/item/1005003547423153.html?spm=a2g0o.order_detail.order_detail_item.3.4eeb7d56Nkpwmr&gatewayAdapt=glo2fra
-  - LTE 4G: only SIM T-PCIE A7670E not GPS =-=-=  INFO : LILYGO® TTGO T-PCIE A7670 4G Carte de Développement ESP32-WROVER-B WIFI Bluetooth epiSeries Composable Tech A7670E A7670SA persévérance 101
-      https://www.tinytronics.nl/shop/en/communication-and-signals/wireless/gps/modules/lilygo-ttgo-t-pcie-sim7600g-h-expansion-module
-
-  - F9P: drotek DP0601                    https://store-drotek.com/891-rtk-zed-f9p-gnss.html
-  - relay: 5V 1-channel high-active       https://www.tinytronics.nl/shop/en/switches/relays/5v-relay-1-channel-high-active
-  - battery: Li-Po Battery 3.7V 2000mAh   https://www.tinytronics.nl/shop/en/power/batteries/li-po/li-po-accu-3.7v-2000mah
-  
-* GNSS code:
-  By: SparkFun Electronics / Nathan Seidle & Paul Clark
-  Date: January 13th, 2022
-  License: MIT.
-=============================================================================================
-*/
 #ifdef TINY_GSM_MODEM_SIM7600
   // Configuration des broches pour modele original SIM7600
   #define UART_BAUD 115200   // for modem only
@@ -99,7 +81,17 @@ int BAT_PERIOD = 10;    // Interval pour envoi de l'état de la batterie (en sec
   #define PIN_TX 27
   #define MODEM_PWRKEY 4
   #define MODEM_POWER 25
-  #define BAT_ADC_PIN 35
+  #include <XPowersLib.h>
+
+  #ifndef PMU_WIRE_PORT
+  #define PMU_WIRE_PORT   Wire
+  #endif
+
+  XPowersLibInterface *PMU = NULL;
+  const uint8_t i2c_sda = 21;
+  const uint8_t i2c_scl = 22;
+  const uint8_t PMU_IRQ = 35;
+  bool pmu_irq = false;
 #elif defined(TINY_GSM_MODEM_A7670)
   #define UART_BAUD 115200   // for modem only
   #define PIN_RX       27
@@ -109,11 +101,7 @@ int BAT_PERIOD = 10;    // Interval pour envoi de l'état de la batterie (en sec
   #define BOARD_POWERON  12
   #define BAT_ADC_PIN 35
 #endif
-//#define LED_PIN   12
-//#define POWER_PIN 25
-//#define IND_PIN   36
-// BAT
-//#include <esp_adc_cal.h>
+
 float lastBatPercent = 0.0;
 float lastBatVoltage = 0.0;
 int vref = 1100;
@@ -131,9 +119,6 @@ HardwareSerial GNSSSerial(2);      // UART2 - GNSS
 #define GNSSBAUD 460800
 #define GNSS_TX    32 //=> vers RX LG580P
 #define GNSS_RX    33 // => vers TX LG580P
-
-// See all AT commands, if wanted
-//#define DUMP_AT_COMMANDS
 
 // Define the serial console for debug prints, if needed
 #define TINY_GSM_DEBUG Serial
@@ -254,10 +239,17 @@ WiFiClient tcpClient;
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
+void readpmu()
+{
+         lastBatVoltage = PMU->getBattVoltage();
+         lastBatVoltage = lastBatVoltage /1000;
+  if (PMU->isBatteryConnect())
+    {
+       lastBatPercent = PMU->getBatteryPercent();
+    }
+}
 float readBatteryPercent() {
-  #ifdef TINY_GSM_MODEM_SIM7600
-    Serial.print("a venir");
-  #elif defined(TINY_GSM_MODEM_A7670)
+  #ifdef TINY_GSM_MODEM_A7670
     uint16_t adcRaw = analogRead(BAT_ADC_PIN);
     // Ajuste le facteur en fonction de ton diviseur de tension
     float voltage = ((float)adcRaw / 4095.0) * 3.3;  // 12 bits ADC, Vref 3.3 V
@@ -416,7 +408,7 @@ void handleSetConfig() {
   savePreferences();
   server.sendHeader("Location", "/config", true);
   server.send(200, "text/html",
-    "<html><head><meta http-equiv='refresh' content='1;URL=/config'></head>"
+    "<html><head><meta http-equiv='refresh' content='1;URL=/config'><meta http-equiv='Content-Type' content='text/html; charset=utf-8'></head>"
     "<body><h1>Paramètres enregistrés !</h1><p>Retour à la configuration...</p></body></html>");
 }
 
@@ -661,6 +653,80 @@ void poweronmodem()
 #endif
 }
 
+void pmu_setup()
+{
+    Wire.begin(i2c_sda, i2c_scl);
+
+    if (!PMU) {
+        PMU = new XPowersAXP2101(PMU_WIRE_PORT);
+        if (!PMU->init()) {
+            Serial.println("Warning: Failed to find AXP2101 power management");
+            delete PMU;
+            PMU = NULL;
+        } else {
+            Serial.println("AXP2101 PMU init succeeded, using AXP2101 PMU");
+
+            // Set the minimum common working voltage of the PMU VBUS input,
+            // below this value will turn off the PMU
+            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
+
+            // Set the maximum current of the PMU VBUS input,
+            // higher than this value will turn off the PMU
+            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_2000MA);
+        }
+    }
+
+    while (!PMU) {
+        Serial.println("The address of the power management device was not found. The power communication of this board failed! Please check.");
+        delay(1000);
+    }
+
+    // Set VSY off voltage as 2600mV , Adjustment range 2600mV ~ 3300mV
+    PMU->setSysPowerDownVoltage(2600);
+
+    /*
+     * The charging indicator can be turned on or off
+     * * * */
+    PMU->setChargingLedMode(XPOWERS_CHG_LED_BLINK_1HZ);
+
+
+    pinMode(PMU_IRQ, INPUT_PULLUP);
+    attachInterrupt(PMU_IRQ, [] {
+        pmu_irq = true;
+    }, FALLING);
+
+if (PMU->getChipModel() == XPOWERS_AXP2101) {
+        //ESP32 VDD 3300mV ， protected esp32 power source
+        PMU->setProtectedChannel(XPOWERS_DCDC1);
+
+        //Unuse power channel
+        PMU->disablePowerOutput(XPOWERS_DCDC2);
+        PMU->disablePowerOutput(XPOWERS_DCDC3);
+        PMU->disablePowerOutput(XPOWERS_DCDC4);
+        PMU->disablePowerOutput(XPOWERS_DCDC5);
+        PMU->disablePowerOutput(XPOWERS_ALDO1);
+        PMU->disablePowerOutput(XPOWERS_ALDO4);
+        PMU->disablePowerOutput(XPOWERS_BLDO1);
+        PMU->disablePowerOutput(XPOWERS_BLDO2);
+        PMU->disablePowerOutput(XPOWERS_DLDO1);
+        PMU->disablePowerOutput(XPOWERS_DLDO2);
+        PMU->disablePowerOutput(XPOWERS_VBACKUP);
+    }
+
+    PMU->clearIrqStatus();
+
+    PMU->disableInterrupt(XPOWERS_ALL_INT);
+
+    PMU->enableInterrupt(XPOWERS_USB_INSERT_INT |
+                         XPOWERS_USB_REMOVE_INT |
+                         XPOWERS_BATTERY_INSERT_INT |
+                         XPOWERS_BATTERY_REMOVE_INT |
+                         XPOWERS_PWR_BTN_CLICK_INT |
+                         XPOWERS_PWR_BTN_LONGPRESSED_INT);
+
+    // Set the time of pressing the button to turn off
+    PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
+}
 //=-=-=-=-=-=-=-=-=-=-=-=-=
 void setup()
 {
@@ -687,8 +753,9 @@ poweronmodem();
     Serial.println("Failed to restart modem, attempting to continue without restarting");
   }
   delay(1000);
-
-#ifdef TINY_GSM_MODEM_A7670
+#ifdef TINY_GSM_MODEM_SIM7600
+pmu_setup();
+#elif defined(TINY_GSM_MODEM_A7670)
   Serial.printf("restart modem");
   if (!modem.restart()) {
     Serial.println("modem.restart() echoue");
@@ -794,6 +861,7 @@ void loop()
 {
   server.handleClient();
     #ifdef TINY_GSM_MODEM_SIM7600
+    readpmu();
   #elif defined(TINY_GSM_MODEM_A7670)
   static unsigned long lastBatRead = 0;
   if (millis() - lastBatRead > 5000) {
