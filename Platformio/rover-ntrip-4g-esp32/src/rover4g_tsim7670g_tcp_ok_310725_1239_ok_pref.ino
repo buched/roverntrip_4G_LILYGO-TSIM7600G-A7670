@@ -81,7 +81,17 @@ int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va cher
   #define PIN_TX 27
   #define MODEM_PWRKEY 4
   #define MODEM_POWER 25
-  #define BAT_ADC_PIN 35
+  #include <XPowersLib.h>
+
+  #ifndef PMU_WIRE_PORT
+  #define PMU_WIRE_PORT   Wire
+  #endif
+
+  XPowersLibInterface *PMU = NULL;
+  const uint8_t i2c_sda = 21;
+  const uint8_t i2c_scl = 22;
+  const uint8_t PMU_IRQ = 35;
+  bool pmu_irq = false;
 #elif defined(TINY_GSM_MODEM_A7670)
   #define UART_BAUD 115200   // for modem only
   #define PIN_RX       27
@@ -229,10 +239,17 @@ WiFiClient tcpClient;
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
+void readpmu()
+{
+         lastBatVoltage = PMU->getBattVoltage();
+         lastBatVoltage = lastBatVoltage /1000;
+  if (PMU->isBatteryConnect())
+    {
+       lastBatPercent = PMU->getBatteryPercent();
+    }
+}
 float readBatteryPercent() {
-  #ifdef TINY_GSM_MODEM_SIM7600
-    Serial.print("a venir");
-  #elif defined(TINY_GSM_MODEM_A7670)
+  #ifdef TINY_GSM_MODEM_A7670
     uint16_t adcRaw = analogRead(BAT_ADC_PIN);
     // Ajuste le facteur en fonction de ton diviseur de tension
     float voltage = ((float)adcRaw / 4095.0) * 3.3;  // 12 bits ADC, Vref 3.3 V
@@ -391,7 +408,7 @@ void handleSetConfig() {
   savePreferences();
   server.sendHeader("Location", "/config", true);
   server.send(200, "text/html",
-    "<html><head><meta http-equiv='refresh' content='1;URL=/config'></head>"
+    "<html><head><meta http-equiv='refresh' content='1;URL=/config'><meta http-equiv='Content-Type' content='text/html; charset=utf-8'></head>"
     "<body><h1>Paramètres enregistrés !</h1><p>Retour à la configuration...</p></body></html>");
 }
 
@@ -636,6 +653,80 @@ void poweronmodem()
 #endif
 }
 
+void pmu_setup()
+{
+    Wire.begin(i2c_sda, i2c_scl);
+
+    if (!PMU) {
+        PMU = new XPowersAXP2101(PMU_WIRE_PORT);
+        if (!PMU->init()) {
+            Serial.println("Warning: Failed to find AXP2101 power management");
+            delete PMU;
+            PMU = NULL;
+        } else {
+            Serial.println("AXP2101 PMU init succeeded, using AXP2101 PMU");
+
+            // Set the minimum common working voltage of the PMU VBUS input,
+            // below this value will turn off the PMU
+            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
+
+            // Set the maximum current of the PMU VBUS input,
+            // higher than this value will turn off the PMU
+            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_2000MA);
+        }
+    }
+
+    while (!PMU) {
+        Serial.println("The address of the power management device was not found. The power communication of this board failed! Please check.");
+        delay(1000);
+    }
+
+    // Set VSY off voltage as 2600mV , Adjustment range 2600mV ~ 3300mV
+    PMU->setSysPowerDownVoltage(2600);
+
+    /*
+     * The charging indicator can be turned on or off
+     * * * */
+    PMU->setChargingLedMode(XPOWERS_CHG_LED_BLINK_1HZ);
+
+
+    pinMode(PMU_IRQ, INPUT_PULLUP);
+    attachInterrupt(PMU_IRQ, [] {
+        pmu_irq = true;
+    }, FALLING);
+
+if (PMU->getChipModel() == XPOWERS_AXP2101) {
+        //ESP32 VDD 3300mV ， protected esp32 power source
+        PMU->setProtectedChannel(XPOWERS_DCDC1);
+
+        //Unuse power channel
+        PMU->disablePowerOutput(XPOWERS_DCDC2);
+        PMU->disablePowerOutput(XPOWERS_DCDC3);
+        PMU->disablePowerOutput(XPOWERS_DCDC4);
+        PMU->disablePowerOutput(XPOWERS_DCDC5);
+        PMU->disablePowerOutput(XPOWERS_ALDO1);
+        PMU->disablePowerOutput(XPOWERS_ALDO4);
+        PMU->disablePowerOutput(XPOWERS_BLDO1);
+        PMU->disablePowerOutput(XPOWERS_BLDO2);
+        PMU->disablePowerOutput(XPOWERS_DLDO1);
+        PMU->disablePowerOutput(XPOWERS_DLDO2);
+        PMU->disablePowerOutput(XPOWERS_VBACKUP);
+    }
+
+    PMU->clearIrqStatus();
+
+    PMU->disableInterrupt(XPOWERS_ALL_INT);
+
+    PMU->enableInterrupt(XPOWERS_USB_INSERT_INT |
+                         XPOWERS_USB_REMOVE_INT |
+                         XPOWERS_BATTERY_INSERT_INT |
+                         XPOWERS_BATTERY_REMOVE_INT |
+                         XPOWERS_PWR_BTN_CLICK_INT |
+                         XPOWERS_PWR_BTN_LONGPRESSED_INT);
+
+    // Set the time of pressing the button to turn off
+    PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
+}
 //=-=-=-=-=-=-=-=-=-=-=-=-=
 void setup()
 {
@@ -662,8 +753,9 @@ poweronmodem();
     Serial.println("Failed to restart modem, attempting to continue without restarting");
   }
   delay(1000);
-
-#ifdef TINY_GSM_MODEM_A7670
+#ifdef TINY_GSM_MODEM_SIM7600
+pmu_setup();
+#elif defined(TINY_GSM_MODEM_A7670)
   Serial.printf("restart modem");
   if (!modem.restart()) {
     Serial.println("modem.restart() echoue");
@@ -769,6 +861,7 @@ void loop()
 {
   server.handleClient();
     #ifdef TINY_GSM_MODEM_SIM7600
+    readpmu();
   #elif defined(TINY_GSM_MODEM_A7670)
   static unsigned long lastBatRead = 0;
   if (millis() - lastBatRead > 5000) {
