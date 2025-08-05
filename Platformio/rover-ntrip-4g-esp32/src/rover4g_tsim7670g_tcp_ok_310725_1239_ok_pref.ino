@@ -82,7 +82,11 @@ int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va cher
   #define MODEM_PWRKEY 4
   #define MODEM_POWER 25
   #include <XPowersLib.h>
-
+  #include <SoftwareSerial.h>
+#define RS232_BAUD 115200
+#define RS232_RX    18
+#define RS232_TX    5
+SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
   #ifndef PMU_WIRE_PORT
   #define PMU_WIRE_PORT   Wire
   #endif
@@ -151,8 +155,10 @@ Preferences prefs;
 #define MODE_BT       1
 #define MODE_BLE      2
 #define MODE_TCP      3
+#define MODE_RS232    4
 #define PIN_MODE_0    14
 #define PIN_MODE_1    15
+#define PIN_MODE_2    23
 int outputMode = MODE_UDP;
 
 WiFiUDP udp;
@@ -516,25 +522,31 @@ void pushGPGGA()
 void setupOutputMode() {
   pinMode(PIN_MODE_0, INPUT_PULLUP);
   pinMode(PIN_MODE_1, INPUT_PULLUP);
+  pinMode(PIN_MODE_2, INPUT_PULLUP);
   int m0 = digitalRead(PIN_MODE_0);
   int m1 = digitalRead(PIN_MODE_1);
-    if (m0 && m1) 
+  int m2 = digitalRead(PIN_MODE_2);
+    if (m0 && m1 && m2) // 111
       {
         outputMode = MODE_UDP;
       }
-    else if (!m0 && m1) 
+    else if (!m0 && m1 && m2) // 011
       {
         outputMode = MODE_BT;
       }
-    else if (m0 && !m1)
+    else if (m0 && !m1 && m2) // 101
       {
         outputMode = MODE_BLE;
       }
-    else if (!m0 && !m1)
+    else if (!m0 && !m1 && m2) // 001
       {
         outputMode = MODE_TCP;
       }
-    else
+    else if (m0 && m1 && !m2) // 110
+      {
+        outputMode = MODE_RS232;
+      }
+    else // Défaut
       {
         outputMode = MODE_UDP;
       }
@@ -565,6 +577,16 @@ void setupBLE() {
   Serial.println("BLE UART prêt");
 }
 
+void setupRS232() {
+  RS232Serial.begin(RS232_BAUD);
+  delay(100);
+  Serial.println("RS232 initialisé sur GPIO " + String(RS232_RX) + "/" + String(RS232_TX) + " à " + String(RS232_BAUD) + " baud");
+  
+  // Message de bienvenue sur RS232
+  RS232Serial.println("ESP32 NTRIP-RS232 Ready");
+  RS232Serial.println("Firmware: " + String(__DATE__) + " " + String(__TIME__));
+}
+
 void sendOutput(const uint8_t* buf, size_t len) {
   if (outputMode == MODE_UDP) {
     udp.beginPacket(udpRemoteIp, udpRemotePort);
@@ -580,11 +602,17 @@ void sendOutput(const uint8_t* buf, size_t len) {
       pTxCharacteristic->setValue((uint8_t*)buf, len);
       pTxCharacteristic->notify();
     }
-  else if (outputMode == MODE_TCP) {
-    if (tcpClient && tcpClient.connected()) {
-      tcpClient.write(buf, len);
+  else if (outputMode == MODE_TCP)
+    {
+      if (tcpClient && tcpClient.connected())
+        {
+          tcpClient.write(buf, len);
+        }
     }
-  }
+  else if (outputMode == MODE_RS232)
+      {  // NOUVEAU
+        RS232Serial.write(buf, len);
+      }
 }
 
 void initWifiUdpAuto() {
@@ -746,7 +774,7 @@ void setup()
   delay(10);
   SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
    delay(1500);
-poweronmodem();
+  poweronmodem();
 
   Serial.println("Initializing modem...");
   if (!modem.init()) {
@@ -839,6 +867,12 @@ pmu_setup();
           Serial.println("Serveur TCP démarré sur le port 2102");
         }
     }
+  else if (outputMode == MODE_RS232) {  // NOUVEAU
+    initWifiUdpAuto();
+    delay(2000);
+    setupRS232();
+    Serial.println("Mode selectionne: RS232");
+  }
 
 if (outputMode != MODE_BT && outputMode != MODE_BLE)
   {
