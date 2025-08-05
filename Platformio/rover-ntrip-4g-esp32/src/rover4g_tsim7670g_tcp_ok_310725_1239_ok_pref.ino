@@ -839,22 +839,23 @@ pmu_setup();
   if (outputMode == MODE_UDP)
     {
       initWifiUdpAuto();
-      Serial.println("Mode selectionne: UDP (PIN1=LOW, PIN2=LOW)");
+      Serial.println("Mode selectionne: UDP (PIN1=HIGH, PIN2=HIGH, PIN3=HIGH)");
     }
   else if (outputMode == MODE_BT)
     {
       setupBTSerial();
-      Serial.println("Mode selectionne: BT (PIN1=LOW, PIN2=HIGH)");
+      Serial.println("Mode selectionne: BT (PIN1=LOW, PIN2=HIGH, PIN3=HIGH)");
     }
   else if (outputMode == MODE_BLE)
     {
       setupBLE();
-      Serial.println("Mode selectionne: BLE (PIN1=HIGH, PIN2=LOW)");
+      Serial.println("Mode selectionne: BLE (PIN1=HIGH, PIN2=LOW, PIN3=HIGH)");
     }
   else if (outputMode == MODE_TCP)
     {
       initWifiUdpAuto();
       delay(2000);
+      Serial.println("Mode selectionne: TCP (PIN1=LOW, PIN2=LOW, PIN3=HIGH)");
       if (WiFi.status() != WL_CONNECTED)
         {
           Serial.println("WiFi non connecté, impossible de démarrer le serveur TCP !");
@@ -871,7 +872,7 @@ pmu_setup();
     initWifiUdpAuto();
     delay(2000);
     setupRS232();
-    Serial.println("Mode selectionne: RS232");
+    Serial.println("Mode selectionne: RS232 (PIN1=HIGH, PIN2=HIGH, PIN3=LOW)");
   }
 
 if (outputMode != MODE_BT && outputMode != MODE_BLE)
