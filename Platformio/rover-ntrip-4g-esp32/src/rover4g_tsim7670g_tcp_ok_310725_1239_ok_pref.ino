@@ -31,7 +31,7 @@
 */
 // Select your modem:
 #define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
-// #define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
+//#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
 
 bool debuggprint = true;
 
@@ -83,10 +83,10 @@ int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va cher
   #define MODEM_POWER 25
   #include <XPowersLib.h>
   #include <SoftwareSerial.h>
-  #define RS232_BAUD 115200
-  #define RS232_RX    18
-  #define RS232_TX    5
-  SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
+#define RS232_BAUD 115200
+#define RS232_RX    18
+#define RS232_TX    5
+SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
   #ifndef PMU_WIRE_PORT
   #define PMU_WIRE_PORT   Wire
   #endif
@@ -104,11 +104,11 @@ int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va cher
   #define MODEM_DTR      25
   #define BOARD_POWERON  12
   #define BAT_ADC_PIN 35
-  #include <SoftwareSerial.h>
-  #define RS232_BAUD 115200
-  #define RS232_RX    18
-  #define RS232_TX    5
-  SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
+    #include <SoftwareSerial.h>
+#define RS232_BAUD 115200
+#define RS232_RX    18
+#define RS232_TX    5
+SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
 #endif
 
 float lastBatPercent = 0.0;
@@ -250,7 +250,7 @@ WiFiClient tcpClient;
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
-float readpmu()
+void readpmu()
 {
   #ifdef TINY_GSM_MODEM_SIM7600
          lastBatVoltage = PMU->getBattVoltage();
@@ -259,10 +259,8 @@ float readpmu()
     {
        lastBatPercent = PMU->getBatteryPercent();
     }
-    #elif defined(TINY_GSM_MODEM_A7670)
-#endif
+    #endif
 }
-
 float readBatteryPercent() {
   #ifdef TINY_GSM_MODEM_A7670
     uint16_t adcRaw = analogRead(BAT_ADC_PIN);
@@ -764,10 +762,7 @@ if (PMU->getChipModel() == XPOWERS_AXP2101) {
 
     // Set the time of pressing the button to turn off
     PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
-  #elif defined(TINY_GSM_MODEM_A7670)
-  #else
-  #error "Aucun modele selectionne! Decommenter un #define MODEL_xxx"
-#endif
+    #endif
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=
 void setup()
@@ -796,7 +791,7 @@ void setup()
   }
   delay(1000);
 #ifdef TINY_GSM_MODEM_SIM7600
-  pmu_setup();
+pmu_setup();
 #elif defined(TINY_GSM_MODEM_A7670)
   Serial.printf("restart modem");
   if (!modem.restart()) {
