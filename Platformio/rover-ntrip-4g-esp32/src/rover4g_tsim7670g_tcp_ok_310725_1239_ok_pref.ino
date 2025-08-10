@@ -78,6 +78,9 @@ int ACQUISION_PERIOD_4G = 120; // secondes
   #define GNSSBAUD 460800
   #define GNSS_TX    32 //=> vers RX GNSS
   #define GNSS_RX    33 //=> vers TX GNSS
+  #define PIN_MODE_0    14
+  #define PIN_MODE_1    15
+  #define PIN_MODE_2    23
   #ifndef PMU_WIRE_PORT
   #define PMU_WIRE_PORT   Wire
   #endif
@@ -102,6 +105,9 @@ int ACQUISION_PERIOD_4G = 120; // secondes
   #define GNSSBAUD 460800
   #define GNSS_TX    32
   #define GNSS_RX    33
+  #define PIN_MODE_0    14
+  #define PIN_MODE_1    15
+  #define PIN_MODE_2    23
 #endif
 
 float lastBatPercent = 0.0;
@@ -158,9 +164,7 @@ Preferences prefs;
 #define MODE_BLE      2
 #define MODE_TCP      3
 #define MODE_RS232    4
-#define PIN_MODE_0    14
-#define PIN_MODE_1    15
-#define PIN_MODE_2    23
+
 int outputMode = MODE_UDP;
 
 WiFiUDP udp;
