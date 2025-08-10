@@ -14,26 +14,16 @@
   - Transmit Lat long positions to the caster for base selection automatique
 
 * Material:
-  - ESP32 with Pcie + RJ45: Lilygo T-pcie  =-=-= INFO : LILYGO ® Carte Bluetooth Wifi TTGO T-Internet-COM ESP32 pour Module IOT Ethernet T-PCIE avec emplacement pour carte SIM TF connecteur type-c    
-      https://fr.aliexpress.com/item/1005003547423153.html?spm=a2g0o.order_detail.order_detail_item.3.4eeb7d56Nkpwmr&gatewayAdapt=glo2fra
-  - LTE 4G: only SIM T-PCIE A7670E not GPS =-=-=  INFO : LILYGO® TTGO T-PCIE A7670 4G Carte de Développement ESP32-WROVER-B WIFI Bluetooth epiSeries Composable Tech A7670E A7670SA persévérance 101
-      https://www.tinytronics.nl/shop/en/communication-and-signals/wireless/gps/modules/lilygo-ttgo-t-pcie-sim7600g-h-expansion-module
-
-  - F9P: drotek DP0601                    https://store-drotek.com/891-rtk-zed-f9p-gnss.html
-  - relay: 5V 1-channel high-active       https://www.tinytronics.nl/shop/en/switches/relays/5v-relay-1-channel-high-active
-  - battery: Li-Po Battery 3.7V 2000mAh   https://www.tinytronics.nl/shop/en/power/batteries/li-po/li-po-accu-3.7v-2000mah
-  
-* GNSS code:
-  By: SparkFun Electronics / Nathan Seidle & Paul Clark
-  Date: January 13th, 2022
-  License: MIT.
+  - ESP32 with Pcie + RJ45: Lilygo T-pcie
+  - LTE 4G: SIM7600 / A7670 (ici SIM7600)
+  - GNSS ZED-F9P
 =============================================================================================
 */
 // Select your modem:
-#define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
-//#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
+#define TINY_GSM_MODEM_SIM7600
+//#define TINY_GSM_MODEM_A7670
 
-bool debuggprint = true;
+bool debuggprint = false;
 
 //RTK connection
 String webCaster = "crtk.net";
@@ -50,7 +40,6 @@ String webSIMUSER = "";
 const bool transmitLocation = true; //Send gga to caster
 unsigned long lastGGA = 0;
 unsigned long timeSendGGA = 10000;
-
 
 String ggaDefaut = "";
 
@@ -72,43 +61,47 @@ unsigned long countRtcm = 0;
 unsigned long startData = 0;
 unsigned long totalData = 0;
 
-int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va chercher le network 4G avant de faire un deepsleep( TIME_TO_SLEEP )
+int ACQUISION_PERIOD_4G = 120; // secondes
 
 #ifdef TINY_GSM_MODEM_SIM7600
-  // Configuration des broches pour modele original SIM7600
-  #define UART_BAUD 115200   // for modem only
+  #define UART_BAUD 115200   // Modem
   #define PIN_RX 26
   #define PIN_TX 27
   #define MODEM_PWRKEY 4
   #define MODEM_POWER 25
   #include <XPowersLib.h>
   #include <SoftwareSerial.h>
-#define RS232_BAUD 115200
-#define RS232_RX    18
-#define RS232_TX    5
-SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
+  #define RS232_BAUD 115200
+  #define RS232_RX    18
+  #define RS232_TX    5
+  SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
+  #define GNSSBAUD 460800
+  #define GNSS_TX    32 //=> vers RX GNSS
+  #define GNSS_RX    33 //=> vers TX GNSS
   #ifndef PMU_WIRE_PORT
   #define PMU_WIRE_PORT   Wire
   #endif
-
   XPowersLibInterface *PMU = NULL;
   const uint8_t i2c_sda = 21;
   const uint8_t i2c_scl = 22;
   const uint8_t PMU_IRQ = 35;
   bool pmu_irq = false;
 #elif defined(TINY_GSM_MODEM_A7670)
-  #define UART_BAUD 115200   // for modem only
+  #define UART_BAUD 115200
   #define PIN_RX       27
   #define PIN_TX       26
   #define MODEM_PWRKEY   4
   #define MODEM_DTR      25
   #define BOARD_POWERON  12
   #define BAT_ADC_PIN 35
-    #include <SoftwareSerial.h>
-#define RS232_BAUD 115200
-#define RS232_RX    18
-#define RS232_TX    5
-SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
+  #include <SoftwareSerial.h>
+  #define RS232_BAUD 115200
+  #define RS232_RX    18
+  #define RS232_TX    5
+  SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
+  #define GNSSBAUD 460800
+  #define GNSS_TX    32
+  #define GNSS_RX    33
 #endif
 
 float lastBatPercent = 0.0;
@@ -117,29 +110,20 @@ int vref = 1100;
 uint32_t timeStamp = 0;
 
 //GSM----------------------------
-// need enough space in the buffer for the entire response
-// else data will be lost (and the http library will fail).
 #define TINY_GSM_RX_BUFFER 1024
 
 #include <HardwareSerial.h>
-HardwareSerial SerialAT(1);  // UART1 - Modem
-HardwareSerial GNSSSerial(2);      // UART2 - GNSS
+HardwareSerial SerialAT(1);   // UART1 - Modem
+HardwareSerial GNSSSerial(2); // UART2 - GNSS
 
-#define GNSSBAUD 460800
-#define GNSS_TX    32 //=> vers RX LG580P
-#define GNSS_RX    33 // => vers TX LG580P
-
-// Define the serial console for debug prints, if needed
+// Debug TinyGSM
 #define TINY_GSM_DEBUG Serial
 
-// Define how you're planning to connect to the internet.
-// This is only needed for this example, not in other code.
+// Connexion
 #define TINY_GSM_USE_GPRS true
 #define TINY_GSM_USE_WIFI false
 
-// set GSM PIN, if any
 #define GSM_PIN ""
-// Your GPRS credentials, if any
 const char apn[]      = "sl2sfr";
 const char gprsUser[] = "";
 const char gprsPass[] = "";
@@ -152,6 +136,19 @@ const char gprsPass[] = "";
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <Preferences.h>
+#include <string.h>
+
+// ---- FreeRTOS (ajouts) ----
+TaskHandle_t hTaskNTRIP = nullptr;
+TaskHandle_t hTaskGNSS  = nullptr;
+TaskHandle_t hTaskWeb   = nullptr;
+
+SemaphoreHandle_t mtxGGA    = nullptr; // protège ggaDefaut + ggaOk
+SemaphoreHandle_t mtxGNSSIO = nullptr; // protège GNSSSerial.write()
+
+volatile bool ggaOk = false;
+
+// ---------------------------
 
 bool tcpConnected = false;
 Preferences prefs;
@@ -182,7 +179,6 @@ uint16_t udpRemotePort = 9999;
 #define SERVICE_UUID   "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHAR_UUID_TX   "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-// Just in case someone defined the wrong thing..
 #if TINY_GSM_USE_GPRS && not defined TINY_GSM_MODEM_HAS_GPRS
 #undef TINY_GSM_USE_GPRS
 #undef TINY_GSM_USE_WIFI
@@ -205,23 +201,18 @@ TinyGsm        modem(debugger);
 #else
 TinyGsm        modem(SerialAT);
 #endif
-//TinyGsmClient mqttClient(modem,0);
+
 TinyGsmClient ntripClient(modem,2);
-//GSM---------------------------
 
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 
-
-//The ESP32 core has a built in base64 library but not every platform does
-//We'll use an external lib if necessary.
 #if defined(ARDUINO_ARCH_ESP32)
-#include "base64.h" //Built-in ESP32 library
+#include "base64.h"
 #else
-#include <Base64.h> //nfriendly library from https://github.com/adamvr/arduino-base64, will work with any platform
+#include <Base64.h>
 #endif
- 
-//PubSubClient mqtt(mqttClient); //MQTT
+
 long lastReconnectAttempt = 0;
 
 /* CONFIG PERIOD DE CAPTATION EN RTK*/
@@ -229,58 +220,51 @@ bool state_fix = false;
 long nb_millisecond_recorded = 0;
 long lastState = 0;
 long lastNetworkAttemps = 0;
-void callback(char* topic, byte* payload, unsigned int length) {
-  // handle message arrived
-}
 
+void callback(char* topic, byte* payload, unsigned int length) {}
 
 //GNSS Global variables
-unsigned long lastReceivedRTCM_ms = 0;          //5 RTCM messages take approximately ~300ms to arrive at 115200bps
-const unsigned long maxTimeBeforeHangup_ms = 10000UL; //If we fail to get a complete RTCM frame after 10s, then disconnect from caster
+unsigned long lastReceivedRTCM_ms = 0;
+const unsigned long maxTimeBeforeHangup_ms = 10000UL;
 
-// Your WiFi connection credentials, if applicable
+// WiFi + Web
 #include <WiFi.h>
 #include <WebServer.h>
 const char* ssid = "RTCM_Monitor";
 const char* password = "";
 WebServer server(80);
-//WiFiServer tcpServer(2102);
 WiFiServer *tcpServer = nullptr;
 WiFiClient tcpClient;
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
+// ---------- Fonctions existantes ----------
 void readpmu()
 {
   #ifdef TINY_GSM_MODEM_SIM7600
-         lastBatVoltage = PMU->getBattVoltage();
-         lastBatVoltage = lastBatVoltage /1000;
-  if (PMU->isBatteryConnect())
-    {
-       lastBatPercent = PMU->getBatteryPercent();
-    }
-    #endif
+  lastBatVoltage = PMU->getBattVoltage();
+  lastBatVoltage = lastBatVoltage /1000;
+  if (PMU->isBatteryConnect()) {
+    lastBatPercent = PMU->getBatteryPercent();
+  }
+  #endif
 }
+
 float readBatteryPercent() {
   #ifdef TINY_GSM_MODEM_A7670
     uint16_t adcRaw = analogRead(BAT_ADC_PIN);
-    // Ajuste le facteur en fonction de ton diviseur de tension
-    float voltage = ((float)adcRaw / 4095.0) * 3.3;  // 12 bits ADC, Vref 3.3 V
-
-    // Si diviseur, par exemple 100k/100k (x2) : voltage *= 2;
+    float voltage = ((float)adcRaw / 4095.0) * 3.3;
     voltage *= 2.0;
     lastBatVoltage = voltage;
-    // Bornes typiques LiPo
     float percent = (voltage - 3.0) / (4.2 - 3.0) * 100.0;
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
     lastBatPercent = percent;
     return percent;
-#endif
+  #endif
+  return 0;
 }
 
-
-//=-=-=-=-=-=-=-=-=-=-=-=SOUS FUNCTION =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 void loadPreferences() {
   prefs.begin("ntripcfg", true); // lecture seule
   webCaster  = prefs.getString("caster",  webCaster);
@@ -299,21 +283,11 @@ void loadPreferences() {
 
 // Extraction de l’ID RTCM et comptage
 void parseRTCMMessage(uint8_t *msg, uint16_t length) {
-  if (length < 2) return; // Trop court
-
-  // Les 12 premiers bits après l'en-tête sont le Message ID
+  if (length < 2) return;
   uint16_t id = ((msg[3] << 4) | (msg[4] >> 4)) & 0x0FFF;
-
-  // Incrément du compteur
   for (int i = 0; i < MAX_IDS; i++) {
-    if (idCounters[i].id == id) {
-      idCounters[i].count++;
-      return;
-    } else if (idCounters[i].id == 0) {
-      idCounters[i].id = id;
-      idCounters[i].count = 1;
-      return;
-    }
+    if (idCounters[i].id == id) { idCounters[i].count++; return; }
+    else if (idCounters[i].id == 0) { idCounters[i].id = id; idCounters[i].count = 1; return; }
   }
 }
 
@@ -354,7 +328,7 @@ void handleRoot() {
   )rawliteral");
 }
 
-// Route AJAX : renvoie les compteurs en HTML brut
+// Route AJAX
 void handleData() {
   String html = "<h2> Info connexion Debit actuel : </h2>";
   html +="<p> Signal RSSI :" + String(signalRSSI) + "dBm </p>";
@@ -406,6 +380,23 @@ void handleReboot() {
   delay(200);
   ESP.restart();
 }
+
+void savePreferences() {
+  prefs.begin("ntripcfg", false);
+  prefs.putString("caster",  webCaster);
+  prefs.putUShort("port",    webPort);
+  prefs.putString("mount",   webMount);
+  prefs.putString("user",    webUser);
+  prefs.putString("pass",    webPW);
+  prefs.putString("ssid",    webSSID);
+  prefs.putString("ssidpw",  webSSIDPW);
+  prefs.putUShort("tcpport", webTCPPort);
+  prefs.putString("apn", webAPN);
+  prefs.putString("simpass", webSIMPASS);
+  prefs.putString("simuser", webSIMUSER);
+  prefs.end();
+}
+
 void handleSetConfig() {
   if (server.hasArg("caster"))    webCaster  = server.arg("caster");
   if (server.hasArg("port"))      webPort    = server.arg("port").toInt();
@@ -425,52 +416,29 @@ void handleSetConfig() {
     "<body><h1>Paramètres enregistrés !</h1><p>Retour à la configuration...</p></body></html>");
 }
 
-void savePreferences() {
-  prefs.begin("ntripcfg", false);
-  prefs.putString("caster",  webCaster);
-  prefs.putUShort("port",    webPort);
-  prefs.putString("mount",   webMount);
-  prefs.putString("user",    webUser);
-  prefs.putString("pass",    webPW);
-  prefs.putString("ssid",    webSSID);
-  prefs.putString("ssidpw",  webSSIDPW);
-  prefs.putUShort("tcpport", webTCPPort);
-  prefs.putString("apn", webAPN);
-  prefs.putString("simpass", webSIMPASS);
-  prefs.putString("simuser", webSIMUSER);
-  prefs.end();
-}
-
-/// COMTPEUR INFORMATION 
+/// COMPTAGE / métriques
 void displayCounters() {
   if (millis() - lastDisplay > 10000) {
-    if (debuggprint) {Serial.println("\n--- Compteurs RTCM ---");
+    if (debuggprint) {
+      Serial.println("\n--- Compteurs RTCM ---");
       for (int i = 0; i < MAX_IDS; i++) {
         if (idCounters[i].id != 0) {
-          Serial.print("Type ");
-          Serial.print(idCounters[i].id);
-          Serial.print(" : ");
-          Serial.println(idCounters[i].count);
+          Serial.print("Type "); Serial.print(idCounters[i].id);
+          Serial.print(" : "); Serial.println(idCounters[i].count);
         }
       }
     }
-    //////Actualisation des donnes web tier/////
     int signal = modem.getSignalQuality();
     signalRSSI = String(signal);
     if (debuggprint) {
-      Serial.print("Signal RSSI: ");
-      Serial.println(signal);
+      Serial.print("Signal RSSI: "); Serial.println(signal);
     }
-
-    ///// donnees telechargement////
     durationData = millis() - lastDisplay;
     secondsData = durationData / 1000.0;
     kbData = totalData / 1024.0;
     kbpsData = kbData / secondsData;
     if (debuggprint) {
-      Serial.print("Débit estimé : ");
-      Serial.print(kbpsData, 2);
-      Serial.println(" KB/s");
+      Serial.print("Débit estimé : "); Serial.print(kbpsData, 2); Serial.println(" KB/s");
       Serial.print("Nombre perte connexion CASTER / GSM =  "); Serial.println(countRtcm);
     }
     lastDisplay = millis();
@@ -479,25 +447,19 @@ void displayCounters() {
   }
 }
 
-
-// Table pour CRC-24Q (valeur initiale : 0)
+// CRC-24Q
 uint32_t crc24q_table[256];
-
-// Génère la table CRC-24Q une fois au démarrage
 void init_crc24q_table() {
   const uint32_t POLY = 0x1864CFB;
   for (int i = 0; i < 256; i++) {
     uint32_t crc = i << 16;
     for (int j = 0; j < 8; j++) {
-      if (crc & 0x800000)
-        crc = (crc << 1) ^ POLY;
-      else
-        crc <<= 1;
+      if (crc & 0x800000) crc = (crc << 1) ^ POLY;
+      else crc <<= 1;
     }
     crc24q_table[i] = crc & 0xFFFFFF;
   }
 }
-
 uint32_t compute_crc24q(const uint8_t *data, size_t len) {
   uint32_t crc = 0;
   for (size_t i = 0; i < len; i++) {
@@ -507,23 +469,29 @@ uint32_t compute_crc24q(const uint8_t *data, size_t len) {
   return crc;
 }
 
-
-
-void pushGPGGA()
-{
+void pushGPGGA() { // version non-RTOS (non utilisée par les tasks)
   if (ggaDefaut.length() < 10 || !ggaDefaut.startsWith("$")) {
-        Serial.println("[NTRIP] Aucun GGA reçu du GNSS, envoi annulé.");
-        return;
-    }
-    if (debuggprint) {
-      Serial.print(F("Pushing GGA to server: "));
-   
-      Serial.print(ggaDefaut); // .nmea is printable (NULL-terminated) and already has \r\n on the end
-    }
-    String ggaToSend = ggaDefaut;
-    if (!ggaToSend.endsWith("\r\n")) ggaToSend += "\r\n";
-    ntripClient.print(String("GET / HTTP/1.0\r\n" + ggaToSend + "\r\n"));
-    lastGGA = millis();
+    Serial.println("[NTRIP] Aucun GGA reçu du GNSS, envoi annulé.");
+    return;
+  }
+  if (debuggprint) {
+    Serial.print(F("Pushing GGA to server: "));
+    Serial.print(ggaDefaut);
+  }
+  String ggaToSend = ggaDefaut;
+  if (!ggaToSend.endsWith("\r\n")) ggaToSend += "\r\n";
+  ntripClient.print(String("GET / HTTP/1.0\r\n" + ggaToSend + "\r\n"));
+  lastGGA = millis();
+}
+
+inline bool hasPrefix(const char* buf, const char* p) {
+  return strncmp(buf, p, strlen(p)) == 0;
+}
+bool isNmeaOfInterest(const char* buf) {
+  return hasPrefix(buf,"$GNGGA") || hasPrefix(buf,"$GPGGA") ||
+         hasPrefix(buf,"$GPRMC") || hasPrefix(buf,"$GNRMC") ||
+         hasPrefix(buf,"$GPVTG") || hasPrefix(buf,"$GNVTG") ||
+         hasPrefix(buf,"$GPZDA") || hasPrefix(buf,"$GNZDA");
 }
 
 void setupOutputMode() {
@@ -533,37 +501,19 @@ void setupOutputMode() {
   int m0 = digitalRead(PIN_MODE_0);
   int m1 = digitalRead(PIN_MODE_1);
   int m2 = digitalRead(PIN_MODE_2);
-    if (m0 && m1 && m2) // 111
-      {
-        outputMode = MODE_UDP;
-      }
-    else if (!m0 && m1 && m2) // 011
-      {
-        outputMode = MODE_BT;
-      }
-    else if (m0 && !m1 && m2) // 101
-      {
-        outputMode = MODE_BLE;
-      }
-    else if (!m0 && !m1 && m2) // 001
-      {
-        outputMode = MODE_TCP;
-      }
-    else if (m0 && m1 && !m2) // 110
-      {
-        outputMode = MODE_RS232;
-      }
-    else // Défaut
-      {
-        outputMode = MODE_UDP;
-      }
+  if (m0 && m1 && m2)      outputMode = MODE_UDP;  // 111
+  else if (!m0 && m1 && m2) outputMode = MODE_BT;   // 011
+  else if (m0 && !m1 && m2) outputMode = MODE_BLE;  // 101
+  else if (!m0 && !m1 && m2)outputMode = MODE_TCP;  // 001
+  else if (m0 && m1 && !m2) outputMode = MODE_RS232;// 110
+  else                       outputMode = MODE_UDP;
 }
 
 void setupBTSerial() {
-WiFi.disconnect(true);  // Déconnecte et désactive le wifi au cas ou
-WiFi.mode(WIFI_OFF);    // Éteint la pile WiFi
-delay(100);
-SerialBT.begin("ESP32_NTRIP");
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  SerialBT.begin("ESP32_NTRIP");
   Serial.println("Bluetooth SPP démarré");
 }
 
@@ -588,8 +538,6 @@ void setupRS232() {
   RS232Serial.begin(RS232_BAUD);
   delay(100);
   Serial.println("RS232 initialisé sur GPIO " + String(RS232_RX) + "/" + String(RS232_TX) + " à " + String(RS232_BAUD) + " baud");
-  
-  // Message de bienvenue sur RS232
   RS232Serial.println("ESP32 NTRIP-RS232 Ready");
   RS232Serial.println("Firmware: " + String(__DATE__) + " " + String(__TIME__));
 }
@@ -600,26 +548,21 @@ void sendOutput(const uint8_t* buf, size_t len) {
     udp.write(buf, len);
     udp.endPacket();
   }
-  else if (outputMode == MODE_BT)
-    {
-      SerialBT.write(buf, len);
+  else if (outputMode == MODE_BT) {
+    SerialBT.write(buf, len);
+  }
+  else if (outputMode == MODE_BLE && deviceConnected && pTxCharacteristic) {
+    pTxCharacteristic->setValue((uint8_t*)buf, len);
+    pTxCharacteristic->notify();
+  }
+  else if (outputMode == MODE_TCP) {
+    if (tcpClient && tcpClient.connected()) {
+      tcpClient.write(buf, len);
     }
-  else if (outputMode == MODE_BLE && deviceConnected && pTxCharacteristic)
-    {
-      pTxCharacteristic->setValue((uint8_t*)buf, len);
-      pTxCharacteristic->notify();
-    }
-  else if (outputMode == MODE_TCP)
-    {
-      if (tcpClient && tcpClient.connected())
-        {
-          tcpClient.write(buf, len);
-        }
-    }
-  else if (outputMode == MODE_RS232)
-      {  // NOUVEAU
-        RS232Serial.write(buf, len);
-      }
+  }
+  else if (outputMode == MODE_RS232) {
+    RS232Serial.write(buf, len);
+  }
 }
 
 void initWifiUdpAuto() {
@@ -660,129 +603,98 @@ void initWifiUdpAuto() {
 void poweronmodem()
 {
   #ifdef TINY_GSM_MODEM_SIM7600
-  // Sequence pour SIM7600
-  pinMode(MODEM_PWRKEY, OUTPUT);
-  pinMode(MODEM_POWER, OUTPUT);
-  digitalWrite(MODEM_POWER, HIGH);
-  delay(100);
-  digitalWrite(MODEM_PWRKEY, HIGH);
-  delay(500);
-  digitalWrite(MODEM_PWRKEY, LOW);
-  delay(5000);
-#elif defined(TINY_GSM_MODEM_A7670)
-// Sequence pour A7670G
-  pinMode(BOARD_POWERON, OUTPUT);
-  digitalWrite(BOARD_POWERON, HIGH);  
-  pinMode(MODEM_PWRKEY, OUTPUT);
-  pinMode(MODEM_DTR, OUTPUT);  
-  digitalWrite(MODEM_DTR, LOW);
-  delay(100);
-  digitalWrite(MODEM_PWRKEY, HIGH);
-  delay(100);
-  digitalWrite(MODEM_PWRKEY, LOW);
-  delay(1000);
-  digitalWrite(MODEM_PWRKEY, HIGH);
-  delay(5000);
-#else
-  #error "Aucun modele selectionne! Decommenter un #define MODEL_xxx"
-#endif
+    pinMode(MODEM_PWRKEY, OUTPUT);
+    pinMode(MODEM_POWER, OUTPUT);
+    digitalWrite(MODEM_POWER, HIGH);
+    delay(100);
+    digitalWrite(MODEM_PWRKEY, HIGH);
+    delay(500);
+    digitalWrite(MODEM_PWRKEY, LOW);
+    delay(5000);
+  #elif defined(TINY_GSM_MODEM_A7670)
+    pinMode(BOARD_POWERON, OUTPUT);
+    digitalWrite(BOARD_POWERON, HIGH);  
+    pinMode(MODEM_PWRKEY, OUTPUT);
+    pinMode(MODEM_DTR, OUTPUT);  
+    digitalWrite(MODEM_DTR, LOW);
+    delay(100);
+    digitalWrite(MODEM_PWRKEY, HIGH);
+    delay(100);
+    digitalWrite(MODEM_PWRKEY, LOW);
+    delay(1000);
+    digitalWrite(MODEM_PWRKEY, HIGH);
+    delay(5000);
+  #else
+    #error "Aucun modele selectionne!"
+  #endif
 }
 
 void pmu_setup()
 {
   #ifdef TINY_GSM_MODEM_SIM7600
     Wire.begin(i2c_sda, i2c_scl);
-
     if (!PMU) {
-        PMU = new XPowersAXP2101(PMU_WIRE_PORT);
-        if (!PMU->init()) {
-            Serial.println("Warning: Failed to find AXP2101 power management");
-            delete PMU;
-            PMU = NULL;
-        } else {
-            Serial.println("AXP2101 PMU init succeeded, using AXP2101 PMU");
-
-            // Set the minimum common working voltage of the PMU VBUS input,
-            // below this value will turn off the PMU
-            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
-
-            // Set the maximum current of the PMU VBUS input,
-            // higher than this value will turn off the PMU
-            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_2000MA);
-        }
+      PMU = new XPowersAXP2101(PMU_WIRE_PORT);
+      if (!PMU->init()) {
+        Serial.println("Warning: Failed to find AXP2101 power management");
+        delete PMU; PMU = NULL;
+      } else {
+        Serial.println("AXP2101 PMU init succeeded, using AXP2101 PMU");
+        PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
+        PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_2000MA);
+      }
     }
-
     while (!PMU) {
-        Serial.println("The address of the power management device was not found. The power communication of this board failed! Please check.");
-        delay(1000);
+      Serial.println("PMU not found! Check.");
+      delay(1000);
     }
-
-    // Set VSY off voltage as 2600mV , Adjustment range 2600mV ~ 3300mV
     PMU->setSysPowerDownVoltage(2600);
-
-    /*
-     * The charging indicator can be turned on or off
-     * * * */
     PMU->setChargingLedMode(XPOWERS_CHG_LED_BLINK_1HZ);
-
-
     pinMode(PMU_IRQ, INPUT_PULLUP);
-    attachInterrupt(PMU_IRQ, [] {
-        pmu_irq = true;
-    }, FALLING);
-
-if (PMU->getChipModel() == XPOWERS_AXP2101) {
-        //ESP32 VDD 3300mV ， protected esp32 power source
-        PMU->setProtectedChannel(XPOWERS_DCDC1);
-
-        //Unuse power channel
-        PMU->disablePowerOutput(XPOWERS_DCDC2);
-        PMU->disablePowerOutput(XPOWERS_DCDC3);
-        PMU->disablePowerOutput(XPOWERS_DCDC4);
-        PMU->disablePowerOutput(XPOWERS_DCDC5);
-        PMU->disablePowerOutput(XPOWERS_ALDO1);
-        PMU->disablePowerOutput(XPOWERS_ALDO4);
-        PMU->disablePowerOutput(XPOWERS_BLDO1);
-        PMU->disablePowerOutput(XPOWERS_BLDO2);
-        PMU->disablePowerOutput(XPOWERS_DLDO1);
-        PMU->disablePowerOutput(XPOWERS_DLDO2);
-        PMU->disablePowerOutput(XPOWERS_VBACKUP);
+    attachInterrupt(PMU_IRQ, [] { pmu_irq = true; }, FALLING);
+    if (PMU->getChipModel() == XPOWERS_AXP2101) {
+      PMU->setProtectedChannel(XPOWERS_DCDC1);
+      PMU->disablePowerOutput(XPOWERS_DCDC2);
+      PMU->disablePowerOutput(XPOWERS_DCDC3);
+      PMU->disablePowerOutput(XPOWERS_DCDC4);
+      PMU->disablePowerOutput(XPOWERS_DCDC5);
+      PMU->disablePowerOutput(XPOWERS_ALDO1);
+      PMU->disablePowerOutput(XPOWERS_ALDO4);
+      PMU->disablePowerOutput(XPOWERS_BLDO1);
+      PMU->disablePowerOutput(XPOWERS_BLDO2);
+      PMU->disablePowerOutput(XPOWERS_DLDO1);
+      PMU->disablePowerOutput(XPOWERS_DLDO2);
+      PMU->disablePowerOutput(XPOWERS_VBACKUP);
     }
-
     PMU->clearIrqStatus();
-
     PMU->disableInterrupt(XPOWERS_ALL_INT);
-
     PMU->enableInterrupt(XPOWERS_USB_INSERT_INT |
                          XPOWERS_USB_REMOVE_INT |
                          XPOWERS_BATTERY_INSERT_INT |
                          XPOWERS_BATTERY_REMOVE_INT |
                          XPOWERS_PWR_BTN_CLICK_INT |
                          XPOWERS_PWR_BTN_LONGPRESSED_INT);
-
-    // Set the time of pressing the button to turn off
     PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
-    #endif
+  #endif
 }
-//=-=-=-=-=-=-=-=-=-=-=-=-=
+
+// ============== SETUP ==============
 void setup()
 {
   prefs.begin("ntripcfg", false);
   prefs.end();
   loadPreferences();
   init_crc24q_table();
-  Serial.begin(115200);  //baudrate maxi pour AOG
+  Serial.begin(115200);
   delay(200);
 
-// GNSS Serial 
-  delay(10);
-    GNSSSerial.begin(GNSSBAUD, SERIAL_8N1, GNSS_RX, GNSS_TX);
+  // GNSS Serial 
+  GNSSSerial.begin(GNSSBAUD, SERIAL_8N1, GNSS_RX, GNSS_TX);
   delay(1000);
 
-//GSM-----------------------------
-  delay(10);
+  // Modem
   SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
-   delay(1500);
+  delay(1500);
   poweronmodem();
 
   Serial.println("Initializing modem...");
@@ -791,15 +703,12 @@ void setup()
   }
   delay(1000);
 #ifdef TINY_GSM_MODEM_SIM7600
-pmu_setup();
+  pmu_setup();
 #elif defined(TINY_GSM_MODEM_A7670)
-  Serial.printf("restart modem");
   if (!modem.restart()) {
     Serial.println("modem.restart() echoue");
     while (true);
   }
-#else
-  Serial.println("on continu le boot");
 #endif
 
   delay(1000);
@@ -807,86 +716,61 @@ pmu_setup();
     Serial.println("fail");
     delay(10000);
     return;
-}
+  }
 
   Serial.print("Waiting for network...");
   int lastNetworkAttemps = millis();
   int now = millis(); 
 
-   while(!modem.waitForNetwork() && ( now - lastNetworkAttemps < ACQUISION_PERIOD_4G ) ) {
-  //if (!modem.waitForNetwork()) {
+  while(!modem.waitForNetwork() && ( now - lastNetworkAttemps < ACQUISION_PERIOD_4G*1000 )) {
     Serial.println("fail to find network, waiting 10sec before retry");
     delay(10000);
     now = millis();
-    //return;
   }
+  if (modem.isNetworkConnected()) Serial.println("Network connected");
 
-  if (modem.isNetworkConnected()) {
-      Serial.println("Network connected");
+  Serial.print(F("Connecting to ")); Serial.print(webAPN);
+  if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
+    Serial.println(" fail");
+    delay(10000);
+    return;
   }
-
-    Serial.print(F("Connecting to "));
-    Serial.print(webAPN);
-    if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
-        Serial.println(" fail");
-        delay(10000);
-        return;
-    }
-    Serial.println(" success");
-
-    if (modem.isGprsConnected()) {
-        Serial.println("GPRS connected");
-    }
+  Serial.println(" success");
+  if (modem.isGprsConnected()) Serial.println("GPRS connected");
 
   Serial.println(F("NTRIP testing"));
 
-  now = millis();
-  lastNetworkAttemps = millis();
-
   setupOutputMode();
 
-  if (outputMode == MODE_UDP)
-    {
-      initWifiUdpAuto();
-      Serial.println("Mode selectionne: UDP (PIN1=HIGH, PIN2=HIGH, PIN3=HIGH)");
+  if (outputMode == MODE_UDP) {
+    initWifiUdpAuto();
+    Serial.println("Mode selectionne: UDP (PIN1=HIGH, PIN2=HIGH, PIN3=HIGH)");
+  } else if (outputMode == MODE_BT) {
+    setupBTSerial();
+    Serial.println("Mode selectionne: BT (PIN1=LOW, PIN2=HIGH, PIN3=HIGH)");
+  } else if (outputMode == MODE_BLE) {
+    setupBLE();
+    Serial.println("Mode selectionne: BLE (PIN1=HIGH, PIN2=LOW, PIN3=HIGH)");
+  } else if (outputMode == MODE_TCP) {
+    initWifiUdpAuto();
+    delay(2000);
+    Serial.println("Mode selectionne: TCP (PIN1=LOW, PIN2=LOW, PIN3=HIGH)");
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi non connecté, impossible de démarrer le serveur TCP !");
+    } else {
+      tcpServer = new WiFiServer(webTCPPort);
+      tcpServer->begin();
+      tcpServer->setNoDelay(true);
+      Serial.println("Serveur TCP démarré sur le port 2102");
     }
-  else if (outputMode == MODE_BT)
-    {
-      setupBTSerial();
-      Serial.println("Mode selectionne: BT (PIN1=LOW, PIN2=HIGH, PIN3=HIGH)");
-    }
-  else if (outputMode == MODE_BLE)
-    {
-      setupBLE();
-      Serial.println("Mode selectionne: BLE (PIN1=HIGH, PIN2=LOW, PIN3=HIGH)");
-    }
-  else if (outputMode == MODE_TCP)
-    {
-      initWifiUdpAuto();
-      delay(2000);
-      Serial.println("Mode selectionne: TCP (PIN1=LOW, PIN2=LOW, PIN3=HIGH)");
-      if (WiFi.status() != WL_CONNECTED)
-        {
-          Serial.println("WiFi non connecté, impossible de démarrer le serveur TCP !");
-        } 
-      else
-        {
-          tcpServer = new WiFiServer(webTCPPort);
-          tcpServer->begin();
-          tcpServer->setNoDelay(true);
-          Serial.println("Serveur TCP démarré sur le port 2102");
-        }
-    }
-  else if (outputMode == MODE_RS232) {  // NOUVEAU
+  } else if (outputMode == MODE_RS232) {
     initWifiUdpAuto();
     delay(2000);
     setupRS232();
     Serial.println("Mode selectionne: RS232 (PIN1=HIGH, PIN2=HIGH, PIN3=LOW)");
   }
 
-if (outputMode != MODE_BT && outputMode != MODE_BLE)
-  {
-    // Web server routes
+  if (outputMode != MODE_BT && outputMode != MODE_BLE) {
     server.on("/", handleRoot);
     server.on("/data", handleData);
     server.on("/config", handleConfig);
@@ -896,355 +780,118 @@ if (outputMode != MODE_BT && outputMode != MODE_BLE)
     delay(1000);
   }
 
-while (Serial.available()) // Empty the serial buffer
-    Serial.read();
+  while (Serial.available()) Serial.read();
+
+  // ===== FreeRTOS: mutex + tasks =====
+  mtxGGA    = xSemaphoreCreateMutex();
+  mtxGNSSIO = xSemaphoreCreateMutex();
+
+  xTaskCreatePinnedToCore(TaskNTRIP, "TaskNTRIP", 8192, nullptr, 3, &hTaskNTRIP, 0); // Core 0
+  xTaskCreatePinnedToCore(TaskGNSSIO,"TaskGNSS",  6144, nullptr, 2, &hTaskGNSS,  1); // Core 1
+  xTaskCreatePinnedToCore(TaskWeb,   "TaskWeb",   4096, nullptr, 1, &hTaskWeb,   0); // Core 0
 }
 
-//=-=-=-=-=-=-=-=-=-=-=-=-=-=- LOOP  =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-void loop()
-{
-  server.handleClient();
-    #ifdef TINY_GSM_MODEM_SIM7600
-    readpmu();
-  #elif defined(TINY_GSM_MODEM_A7670)
-  static unsigned long lastBatRead = 0;
-  if (millis() - lastBatRead > 5000) {
-    readBatteryPercent();
-    lastBatRead = millis();
-  }
-#endif
-  static bool ggaOk = false;
+// ============== LOOP (idle) ==============
+void loop() {
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
-  // =-=-=-=-= GNSS READ STATE =-=-=-=-=
-  if (GNSSSerial.available()) // Check for a new key press
-  {
-    String s = GNSSSerial.readStringUntil('\n');
-    //Serial.println(s); // Empty the serial buffer
-    if (s.startsWith("$GNGGA") || s.startsWith("$GPGGA"))
-      {
-          ggaDefaut = s;
-          ggaOk = true;
-      }
-    if (s.startsWith("$GNGGA") || s.startsWith("$GPGGA") || s.startsWith("$GPRMC") || s.startsWith("$GNRMC") || s.startsWith("$GPVTG") || s.startsWith("$NVTG") || s.startsWith("$GPZDA") || s.startsWith("$NZDA"))
-      {
-          if (outputMode == MODE_TCP)
-          {
-            // Si pas de client connecté, en accepter un nouveau
-            if (!tcpClient || !tcpClient.connected())
-            {
-              tcpClient = tcpServer->available();
-              if (tcpClient)
-                {
-                  tcpConnected = true;
-                  Serial.println("Client TCP connecté !");
-                  // Optionnel : send hello ou info
-                }
-              else
-                {
-                  tcpConnected = false;
-                }
-            }
-            // Si déconnexion :
-            if (tcpConnected && !tcpClient.connected())
-              {
-                Serial.println("Client TCP déconnecté !");
-                tcpClient.stop();
-                tcpConnected = false;
-              }
-          }
-      }
-    sendOutput((const uint8_t*)s.c_str(), s.length());
-  }
-
-
-  // =-=-=-=-= NTRIP STATE =-=-=-=-=
-  long now = millis();
-  enum states // Use a 'state machine' to open and close the connection
-  {
-    open_connection,
-    push_data_and_wait_for_keypress,
-    close_connection,
-    waiting_for_keypress
-  };
-  static states state = open_connection;
-
-  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
-  switch (state)
-  {
-    case open_connection:
-      if (!ggaOk)
-        {
-          if (debuggprint) Serial.println("Attente d'une trame GGA du GNSS pour ouvrir la connexion NTRIP...");
-          break; // On n'avance pas dans la state machine !
-        }
-      Serial.println(F("Connecting to the NTRIP caster..."));
-      if (beginClient()) // Try to open the connection to the caster
-      {
-        if (debuggprint) {Serial.println(F("Connected to the NTRIP caster! Press any key to disconnect..."));}
-        state = push_data_and_wait_for_keypress; // Move on
-      }
-      else
-      {
-        if (debuggprint) {Serial.print(F("Could not connect to the caster. Trying again in 5 seconds."));}
-        for (int i = 0; i < 5; i++)
-        {
-          delay(1000);
-          if (debuggprint) {Serial.print(F("."));}
-        }
-        Serial.println();
-      }
-      break;
-
-    //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
-    case push_data_and_wait_for_keypress:
-      if ((processConnection() == false))
-      {
-        state = close_connection; // Move on
-      }
-      break;
-
-    //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
-    case close_connection:
-      if (debuggprint) {Serial.println(F("Closing the connection to the NTRIP caster..."));}
-      closeConnection();
-      if (debuggprint) {Serial.println(F("Press any key to reconnect..."));}
-      state = waiting_for_keypress; // Move on
-      break;
-
-    //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
-    case waiting_for_keypress:
-      state = open_connection; // Move on
-      break;
-  }
-  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-  
-  //GSM-------------------------------
-   now = millis();
-    // Make sure we're still registered on the network
-    if (!modem.isNetworkConnected()) {
-      lastNetworkAttemps = millis();
-      if (debuggprint) {Serial.println("LOOP - Network disconnected");}
-
-      // Testing 4G connection during ACQUISION_PERIOD_4G ( second ), if not connected after that, DeepSleep is launched
-      while(!modem.waitForNetwork() && ( now - lastNetworkAttemps < ACQUISION_PERIOD_4G ) ) {
-        if (debuggprint) {Serial.println("LOOP - fail to find network, waiting 10sec before retry");}
-        delay(10000);
-        now = millis();
-      }
-
-      if (modem.isNetworkConnected()) {
-          if (debuggprint) {Serial.println("LOOP - Network re-connected");}
-      }
-
-
-      if (!modem.isGprsConnected()) {
-            if (debuggprint) {Serial.println("GPRS disconnected!");
-            Serial.print(F("Connecting to "));
-            Serial.print(webAPN);}
-            if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
-                if (debuggprint) {Serial.println(" fail");}
-                delay(10000);
-                return;
-            }
-            if (modem.isGprsConnected()) {
-                if (debuggprint) {Serial.println("GPRS reconnected");}
-            }
-        }
-    }
-  //DeepSleep configuration
-    if ( lastState == 0 ) {
-        if (debuggprint) {Serial.println("lastState == 0 Valued to " + String(now) );}
-        lastState = now;
-    }
-    
-
-    if ((ntripClient.connected() == true) && (transmitLocation == true) && (millis() - lastGGA > timeSendGGA))
-  { if (debuggprint) {Serial.println("Push data gga to caster");}
-    lastGGA = millis();
-    pushGPGGA();}
 }
 
-//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= FUNCTION -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// -------------------- NTRIP / HTTP helpers --------------------
 
-
-//Connect to NTRIP Caster. Return true is connection is successful.
-bool beginClient()
-{
+bool beginClient() {
   if (debuggprint) {
-    Serial.print(F("Opening socket to "));
-    Serial.println(webCaster);
+    Serial.print(F("Opening socket to ")); Serial.print(webCaster);
+    Serial.print(F(" : ")); Serial.println(webPort);
   }
 
-  if (ntripClient.connect(webCaster.c_str(), webPort) == false) //Attempt connection
-  {
-    if (debuggprint) {Serial.println(F("Connection to caster failed"));}
-    return (false);
+  if (!ntripClient.connect(webCaster.c_str(), webPort)) {
+    if (debuggprint) Serial.println(F("Connection to caster failed"));
+    return false;
   }
-  else
-  { countRtcm++;
-    if (debuggprint) {
-      Serial.print(F("Connected to "));
-      Serial.print(webCaster);
-      Serial.print(F(" : "));
-      Serial.println(webPort);
+  countRtcm++;
 
-      Serial.print(F("Requesting NTRIP Data from mount point "));
-      Serial.println(webMount.c_str());
-    }
+  const int SERVER_BUFFER_SIZE = 512;
+  char serverRequest[SERVER_BUFFER_SIZE];
+  int n = snprintf(serverRequest, SERVER_BUFFER_SIZE,
+                   "GET /%s HTTP/1.0\r\n"
+                   "User-Agent: NTRIP Client v1.0\r\n",
+                   webMount.c_str());
+  if (n < 0 || n >= SERVER_BUFFER_SIZE) { ntripClient.stop(); return false; }
 
-    // Set up the server request (GET)
-    const int SERVER_BUFFER_SIZE = 512;
-    char serverRequest[SERVER_BUFFER_SIZE];
-    snprintf(serverRequest,
-             SERVER_BUFFER_SIZE,
-             "GET /%s HTTP/1.0\r\nUser-Agent: NTRIP SparkFun u-blox Client v1.0\r\n",
-             webMount.c_str());
-
-    // Set up the credentials
-    char credentials[512];
-    if (strlen(webUser.c_str()) == 0)
-    {
-      strncpy(credentials, "Accept: */*\r\nConnection: close\r\n", sizeof(credentials));
-    }
-    else
-    {
-      //Pass base64 encoded user:pw
-      char userCredentials[sizeof(webUser.c_str()) + sizeof(webPW.c_str()) + 2]; //The ':' takes up a spot
-      snprintf(userCredentials, sizeof(userCredentials), "%s:%s", webUser.c_str(), webPW.c_str());
-
-      if (debuggprint) {
-        Serial.print(F("Sending credentials: "));
-        Serial.println(userCredentials);
-      }
+  char credentials[256]; credentials[0] = '\0';
+  if (webUser.length() > 0) {
+    String up = webUser + ":" + webPW;
+    char userPass[up.length() + 1];
+    up.toCharArray(userPass, sizeof(userPass));
 
   #if defined(ARDUINO_ARCH_ESP32)
-      //Encode with ESP32 built-in library
-      base64 b;
-      String strEncodedCredentials = b.encode(userCredentials);
-      char encodedCredentials[strEncodedCredentials.length() + 1];
-      strEncodedCredentials.toCharArray(encodedCredentials, sizeof(encodedCredentials)); //Convert String to char array
+    base64 b; String enc = b.encode(userPass);
+    char encC[200]; enc.toCharArray(encC, sizeof(encC));
+    snprintf(credentials, sizeof(credentials), "Authorization: Basic %s\r\n", encC);
   #else
-      //Encode with nfriendly library
-      int encodedLen = base64_enc_len(strlen(userCredentials));
-      char encodedCredentials[encodedLen];                                         //Create array large enough to house encoded data
-      base64_encode(encodedCredentials, userCredentials, strlen(userCredentials)); //Note: Input array is consumed
+    int encLen = base64_enc_len(strlen(userPass)); if (encLen > 180) encLen = 180;
+    char encC[181] = {0}; base64_encode(encC, userPass, strlen(userPass));
+    snprintf(credentials, sizeof(credentials), "Authorization: Basic %s\r\n", encC);
   #endif
-
-      snprintf(credentials, sizeof(credentials), "Authorization: Basic %s\r\n", encodedCredentials);
-    }
-
-    // Add the encoded credentials to the server request
-    strncat(serverRequest, credentials, SERVER_BUFFER_SIZE);
-    strncat(serverRequest, "\r\n", SERVER_BUFFER_SIZE);
-
-    if (debuggprint) {
-      Serial.print(F("serverRequest size: "));
-      Serial.print(strlen(serverRequest));
-      Serial.print(F(" of "));
-      Serial.print(sizeof(serverRequest));
-      Serial.println(F(" bytes available"));
-
-    // Send the server request
-      Serial.println(F("Sending server request: "));
-      Serial.println(serverRequest);
-    }
-    ntripClient.write((const uint8_t*)serverRequest, strlen(serverRequest));
-
-    //Wait up to 5 seconds for response
-    unsigned long startTime = millis();
-    while (ntripClient.available() == 0)
-    {
-      if (millis() > (startTime + 5000))
-      {
-        if (debuggprint) {Serial.println(F("Caster timed out!"));}
-        ntripClient.stop();
-        return (false);
-      }
-      delay(10);
-    }
-
-    //Check reply
-    int connectionResult = 0;
-    char response[512];
-    size_t responseSpot = 0;
-    while (ntripClient.available()) // Read bytes from the caster and store them
-    {
-      if (responseSpot == sizeof(response) - 1) // Exit the loop if we get too much data
-        break;
-
-      response[responseSpot++] = ntripClient.read();
-
-      if (connectionResult == 0) // Only print success/fail once
-      {
-        if (strstr(response, "200") != NULL) //Look for '200 OK'
-        {
-          connectionResult = 200;
-        }
-        if (strstr(response, "401") != NULL) //Look for '401 Unauthorized'
-        {
-          if (debuggprint) {Serial.println(F("Hey - your credentials look bad! Check your caster username and password."));}
-          connectionResult = 401;
-        }
-      }
-    }
-    response[responseSpot] = '\0'; // NULL-terminate the response
-
-    //Serial.print(F("Caster responded with: ")); Serial.println(response); // Uncomment this line to see the full response
-
-    if (connectionResult != 200)
-    {
-      if (debuggprint) {
-        Serial.print(F("Failed to connect to "));
-        Serial.println(webCaster);
-      }
-      return (false);
-    }
-    else
-    {
-      if (debuggprint) {
-        Serial.print(F("Connected to: "));
-        Serial.println(webCaster);
-      }
-      lastReceivedRTCM_ms = millis(); //Reset timeout
-    }
+  } else {
+    strncpy(credentials, "Accept: */*\r\nConnection: close\r\n", sizeof(credentials)-1);
+    credentials[sizeof(credentials)-1] = '\0';
   }
 
-  return (true);
-} // /beginClient
+  size_t used = strlen(serverRequest);
+  strncat(serverRequest, credentials, SERVER_BUFFER_SIZE - used - 1);
+  used = strlen(serverRequest);
+  strncat(serverRequest, "\r\n", SERVER_BUFFER_SIZE - used - 1);
 
-//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+  if (debuggprint) {
+    Serial.print(F("serverRequest size: ")); Serial.println(strlen(serverRequest));
+    Serial.println(F("Sending server request:")); Serial.println(serverRequest);
+  }
+  ntripClient.write((const uint8_t*)serverRequest, strlen(serverRequest));
 
-bool processConnection()
-{
-  if (ntripClient.connected() == true) // Check that the connection is still open
-  {
-    // uint8_t rtcmData[512 * 4]; //Most incoming data is around 500 bytes but may be larger
-    uint8_t rtcmData[512 * 4]; //Most incoming data is around 500 bytes but may be larger
+  unsigned long t0 = millis();
+  while (ntripClient.available() == 0) {
+    if (millis() - t0 > 5000UL) { if (debuggprint) Serial.println(F("Caster timed out!")); ntripClient.stop(); return false; }
+    delay(10);
+  }
+
+  int code = 0; char resp[512]; size_t pos = 0;
+  while (ntripClient.available() && pos < sizeof(resp)-1) {
+    resp[pos++] = ntripClient.read();
+    if (code == 0) {
+      if (strstr(resp, "200")) code = 200;
+      if (strstr(resp, "401")) code = 401;
+      if (strstr(resp, "403")) code = 403;
+      if (strstr(resp, "404")) code = 404;
+    }
+    if (pos >= 4 && resp[pos-4]=='\r' && resp[pos-3]=='\n' && resp[pos-2]=='\r' && resp[pos-1]=='\n') break;
+  }
+  resp[pos] = '\0';
+  if (code != 200) { if (debuggprint){ Serial.println(F("HTTP not 200")); Serial.println(resp);} ntripClient.stop(); return false; }
+
+  lastReceivedRTCM_ms = millis();
+  return true;
+}
+
+bool processConnection() {
+  if (ntripClient.connected() == true) {
+    uint8_t rtcmData[512 * 4];
     size_t rtcmCount = 0;
-
-    
-    // Lire et transmettre les trames RTCM
 
     static enum {WAIT_SYNC, READ_LENGTH_1, READ_LENGTH_2, READ_PAYLOAD} stateRtcmTrame = WAIT_SYNC;
     static uint16_t length = 0;
     static uint16_t indexRtcmTrame = 0;
-    static uint8_t bufferRtcmTrame[2056];  // > buffer des ports serial
+    static uint8_t bufferRtcmTrame[2056];
 
-    //Collect any available RTCM data
-    while (ntripClient.available())
-    {
-      //=-=-=-=-=-=-=- analyse rtcm trame =-=-=-=-=
-      uint8_t b = ntripClient.read();  //client.read();
+    while (ntripClient.available()) {
+      uint8_t b = ntripClient.read();
       rtcmData[rtcmCount++] = b;
       totalData = totalData+1;
 
       switch (stateRtcmTrame) {
           case WAIT_SYNC:
-            if (b == 0xD3) {          //  Format de base d'une trame RTCM 3.x
+            if (b == 0xD3) {
               bufferRtcmTrame[0] = b;
               indexRtcmTrame = 1;
               stateRtcmTrame = READ_LENGTH_1;
@@ -1253,37 +900,36 @@ bool processConnection()
 
           case READ_LENGTH_1:
             bufferRtcmTrame[indexRtcmTrame++] = b;
-            length = (b & 0x03) << 8;  // only 2 LSBs used
+            length = (b & 0x03) << 8;
             stateRtcmTrame = READ_LENGTH_2;
             break;
 
           case READ_LENGTH_2:
             bufferRtcmTrame[indexRtcmTrame++] = b;
             length |= b;
-            length += 3; // Include the 3-byte CRC at the end
+            length += 3; // + CRC
             stateRtcmTrame = READ_PAYLOAD;
-            if (debuggprint && length > 1023) {Serial.println("Trame RTCM TROP TROP LONGUEEEEEEEE");}
+            if (debuggprint && length > 1023) {Serial.println("Trame RTCM trop longue");}
             break;
 
           case READ_PAYLOAD:
             bufferRtcmTrame[indexRtcmTrame++] = b;
             if (indexRtcmTrame >= length + 3) {
-              // Trame complète reçue !
-
-              // Vérification du CRC
               uint32_t crc_calc = compute_crc24q(bufferRtcmTrame, indexRtcmTrame - 3);
               uint32_t crc_recv = ((uint32_t)bufferRtcmTrame[indexRtcmTrame - 3] << 16) |
                                   ((uint32_t)bufferRtcmTrame[indexRtcmTrame - 2] << 8) |
                                   ((uint32_t)bufferRtcmTrame[indexRtcmTrame - 1]);
-
               if (crc_calc == crc_recv) {
                 timeStateCaster = millis();
-                GNSSSerial.write(bufferRtcmTrame, indexRtcmTrame); // envoi RTCM sur pour serie GNSS
-                parseRTCMMessage(bufferRtcmTrame, indexRtcmTrame);    // ajout pour compteur de trame RTCM
+                // PROTÉGER l'accès série GNSS
+                if (xSemaphoreTake(mtxGNSSIO, pdMS_TO_TICKS(50)) == pdTRUE) {
+                  GNSSSerial.write(bufferRtcmTrame, indexRtcmTrame);
+                  xSemaphoreGive(mtxGNSSIO);
+                }
+                parseRTCMMessage(bufferRtcmTrame, indexRtcmTrame);
               } else {
                 if (debuggprint) {Serial.println("Trame RTCM ignorée : CRC invalide");}
               }
-              // Réinitialisation pour la prochaine trame
               indexRtcmTrame = 0;
               stateRtcmTrame = WAIT_SYNC;
             }
@@ -1291,58 +937,158 @@ bool processConnection()
       }
     }
 
-    if (rtcmCount > 0)
-    {
+    if (rtcmCount > 0) {
       lastReceivedRTCM_ms = millis();
       if (debuggprint) {
         Serial.println();
-        Serial.print(F("Pushed "));
-        Serial.print(rtcmCount);
-        Serial.println(F(" RTCM bytes to GNSS "));
+        Serial.print(F("Pushed ")); Serial.print(rtcmCount); Serial.println(F(" RTCM bytes to GNSS "));
       }
     }
     displayCounters();
-  }
-  else
-  {
+  } else {
     if (debuggprint) {Serial.println(F("Connection dropped!"));}
-    return (false); // Connection has dropped - return false
+    return false;
   }
 
-  //Timeout if we don't have new data for maxTimeBeforeHangup_ms
-  if ((millis() - lastReceivedRTCM_ms) > maxTimeBeforeHangup_ms)
-  {
+  if ((millis() - lastReceivedRTCM_ms) > maxTimeBeforeHangup_ms) {
     if (debuggprint) {Serial.println(F("RTCM timeout!"));}
-    return (false); // Connection has timed out - return false
+    return false;
   }
 
-  return (true);
-} // /processConnection
+  return true;
+}
 
-//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
-void closeConnection()
-{
-  if (ntripClient.connected() == true)
-  {
+void closeConnection() {
+  if (ntripClient.connected() == true) {
     ntripClient.stop();
   }
   if (debuggprint) {Serial.println(F("Disconnected!"));}
-  ESP.restart(); //TODO:resolve, delay time, bug infinity reconnect ntrip if base RTK down
+  ESP.restart(); // conserve ton comportement
 }
 
-//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// ------------ FreeRTOS tasks ------------
 
-//Return true if a key has been pressed
-bool keyPressed()
-{
-  if (Serial.available()) // Check for a new key press
-  {
-    delay(100); // Wait for any more keystrokes to arrive
-    while (Serial.available()) // Empty the serial buffer
-      Serial.read();
-    return (true);
+void pushGPGGA_RTOS() {
+  String s;
+  if (xSemaphoreTake(mtxGGA, pdMS_TO_TICKS(20)) == pdTRUE) {
+    s = ggaDefaut;
+    xSemaphoreGive(mtxGGA);
   }
+  if (s.length() < 10 || s.charAt(0) != '$') return;
 
-  return (false);
+  String ggaToSend = s;
+  if (!ggaToSend.endsWith("\r\n")) ggaToSend += "\r\n";
+  ntripClient.print(String("GET / HTTP/1.0\r\n" + ggaToSend + "\r\n"));
+  lastGGA = millis();
+}
+
+// Core 1 : lecture GNSS + diffusion
+void TaskGNSSIO(void *pv) {
+  static char nmea[256];
+  for (;;) {
+    if (GNSSSerial.available()) {
+      int got = GNSSSerial.readBytesUntil('\n', (uint8_t*)nmea, sizeof(nmea)-2);
+      if (got > 0) {
+        nmea[got]   = '\n';
+        nmea[got+1] = '\0';
+
+        if (hasPrefix(nmea, "$GPGGA") || hasPrefix(nmea, "$GNGGA")) {
+          if (xSemaphoreTake(mtxGGA, pdMS_TO_TICKS(20)) == pdTRUE) {
+            ggaDefaut = String(nmea);
+            ggaOk = true;
+            xSemaphoreGive(mtxGGA);
+          }
+        }
+
+        if (isNmeaOfInterest(nmea) && outputMode == MODE_TCP) {
+          if ((!tcpClient || !tcpClient.connected()) && tcpServer) {
+            WiFiClient c = tcpServer->available();
+            if (c) { tcpClient = c; tcpConnected = true; Serial.println("Client TCP connecté !"); }
+            else   { tcpConnected = false; }
+          }
+          if (tcpConnected && !tcpClient.connected()) {
+            Serial.println("Client TCP déconnecté !");
+            tcpClient.stop();
+            tcpConnected = false;
+          }
+        }
+
+        sendOutput((const uint8_t*)nmea, got+1);
+      }
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(5));
+    }
+  }
+}
+
+// Core 0 : socket NTRIP + RTCM → GNSS + push GGA + réseau
+void TaskNTRIP(void *pv) {
+  enum { open_connection, push_data_and_wait, close_connection, wait_reopen };
+  int state = open_connection;
+
+  for (;;) {
+    switch (state) {
+      case open_connection: {
+        bool ready = false;
+        if (xSemaphoreTake(mtxGGA, pdMS_TO_TICKS(20)) == pdTRUE) {
+          ready = ggaOk;
+          xSemaphoreGive(mtxGGA);
+        }
+        if (!ready) { vTaskDelay(pdMS_TO_TICKS(200)); break; }
+
+        Serial.println(F("Connecting to the NTRIP caster..."));
+        if (beginClient()) state = push_data_and_wait;
+        else               vTaskDelay(pdMS_TO_TICKS(5000));
+      } break;
+
+      case push_data_and_wait: {
+        if (!processConnection()) {
+          state = close_connection;
+          break;
+        }
+        static uint32_t last = 0;
+        if (millis() - last > timeSendGGA) {
+          last = millis();
+          pushGPGGA_RTOS();
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+      } break;
+
+      case close_connection:
+        closeConnection();
+        state = wait_reopen;
+        break;
+
+      case wait_reopen:
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        state = open_connection;
+        break;
+    }
+
+    // Vérif réseau périodique
+    static uint32_t lastNet = 0;
+    if (millis() - lastNet > 2000) {
+      lastNet = millis();
+      if (!modem.isNetworkConnected()) {
+        modem.waitForNetwork(true);
+      }
+      if (!modem.isGprsConnected()) {
+        modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str());
+      }
+    }
+  }
+}
+
+// Core 0 : Web + métriques
+void TaskWeb(void *pv) {
+  readpmu();
+  for (;;) {
+    server.handleClient();
+    static uint32_t last = 0;
+    if (millis() - last > 1000) {
+      last = millis();
+      displayCounters();
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
 }
