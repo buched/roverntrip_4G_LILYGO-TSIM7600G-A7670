@@ -8,20 +8,6 @@
 * Souce: https://github.com/jancelin/physalia
 * By: INRAE / Julien Ancelin & Romain Tourte, Quentin Lesniack
 * License: GNU Affero General Public License v3.0
-
-* Object: 
-  - Connect to 4g LTE network and get RTCM data from CentipedeRTK caster as a Client with web interface control / compteur 
-  - Transmit Lat long positions to the caster for base selection automatique
-
-* Material:
-  - ESP32 with Pcie + RJ45: Lilygo T-pcie  =-=-= INFO : LILYGO ® Carte Bluetooth Wifi TTGO T-Internet-COM ESP32 pour Module IOT Ethernet T-PCIE avec emplacement pour carte SIM TF connecteur type-c    
-      https://fr.aliexpress.com/item/1005003547423153.html?spm=a2g0o.order_detail.order_detail_item.3.4eeb7d56Nkpwmr&gatewayAdapt=glo2fra
-  - LTE 4G: only SIM T-PCIE A7670E not GPS =-=-=  INFO : LILYGO® TTGO T-PCIE A7670 4G Carte de Développement ESP32-WROVER-B WIFI Bluetooth epiSeries Composable Tech A7670E A7670SA persévérance 101
-      https://www.tinytronics.nl/shop/en/communication-and-signals/wireless/gps/modules/lilygo-ttgo-t-pcie-sim7600g-h-expansion-module
-
-  - F9P: drotek DP0601                    https://store-drotek.com/891-rtk-zed-f9p-gnss.html
-  - relay: 5V 1-channel high-active       https://www.tinytronics.nl/shop/en/switches/relays/5v-relay-1-channel-high-active
-  - battery: Li-Po Battery 3.7V 2000mAh   https://www.tinytronics.nl/shop/en/power/batteries/li-po/li-po-accu-3.7v-2000mah
   
 * GNSS code:
   By: SparkFun Electronics / Nathan Seidle & Paul Clark
