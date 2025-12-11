@@ -108,7 +108,7 @@ HardwareSerial GNSSSerial(2);      // UART2 - GNSS
 
 #define GNSSBAUD 460800
 #define GNSS_TX    34 //=> vers RX LG580P
-#define GNSS_RX    33 // => vers TX LG580P
+#define GNSS_RX    32 // => vers TX LG580P
 
 // Define the serial console for debug prints, if needed
 #define TINY_GSM_DEBUG Serial
