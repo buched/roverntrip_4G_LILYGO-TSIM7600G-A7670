@@ -8,20 +8,6 @@
 * Souce: https://github.com/jancelin/physalia
 * By: INRAE / Julien Ancelin & Romain Tourte, Quentin Lesniack
 * License: GNU Affero General Public License v3.0
-
-* Object: 
-  - Connect to 4g LTE network and get RTCM data from CentipedeRTK caster as a Client with web interface control / compteur 
-  - Transmit Lat long positions to the caster for base selection automatique
-
-* Material:
-  - ESP32 with Pcie + RJ45: Lilygo T-pcie  =-=-= INFO : LILYGO ® Carte Bluetooth Wifi TTGO T-Internet-COM ESP32 pour Module IOT Ethernet T-PCIE avec emplacement pour carte SIM TF connecteur type-c    
-      https://fr.aliexpress.com/item/1005003547423153.html?spm=a2g0o.order_detail.order_detail_item.3.4eeb7d56Nkpwmr&gatewayAdapt=glo2fra
-  - LTE 4G: only SIM T-PCIE A7670E not GPS =-=-=  INFO : LILYGO® TTGO T-PCIE A7670 4G Carte de Développement ESP32-WROVER-B WIFI Bluetooth epiSeries Composable Tech A7670E A7670SA persévérance 101
-      https://www.tinytronics.nl/shop/en/communication-and-signals/wireless/gps/modules/lilygo-ttgo-t-pcie-sim7600g-h-expansion-module
-
-  - F9P: drotek DP0601                    https://store-drotek.com/891-rtk-zed-f9p-gnss.html
-  - relay: 5V 1-channel high-active       https://www.tinytronics.nl/shop/en/switches/relays/5v-relay-1-channel-high-active
-  - battery: Li-Po Battery 3.7V 2000mAh   https://www.tinytronics.nl/shop/en/power/batteries/li-po/li-po-accu-3.7v-2000mah
   
 * GNSS code:
   By: SparkFun Electronics / Nathan Seidle & Paul Clark
@@ -29,24 +15,22 @@
   License: MIT.
 =============================================================================================
 */
-// Select your modem:
-#define TINY_GSM_MODEM_SIM7600  // https://lilygo.cc/products/a-t-pcie + https://lilygo.cc/products/a-t-pcie?variant=42335922028725
-//#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
+#define TINY_GSM_MODEM_A7670  // https://lilygo.cc/products/t-sim-a7670e?variant=42737494458549
 
 bool debuggprint = true;
 
 //RTK connection
 String webCaster = "crtk.net";
 uint16_t webPort = 2101;
-String webMount = "NEAR";
+String webMount = "LRSEC";
 String webUser = "centipede";
 String webPW = "centipede";
 String webSSID = "";
 String webSSIDPW = "";
 uint16_t webTCPPort = 2102;
-String webAPN    = "sl2sfr";
-String webSIMPASS = "";
-String webSIMUSER = "";
+String webAPN    = "orange";
+String webSIMPASS = "orange";
+String webSIMUSER = "orange";
 const bool transmitLocation = true; //Send gga to caster
 unsigned long lastGGA = 0;
 unsigned long timeSendGGA = 10000;
@@ -74,29 +58,6 @@ unsigned long totalData = 0;
 
 int ACQUISION_PERIOD_4G = 120; // Temps ( en seconde ) pendant lequel on va chercher le network 4G avant de faire un deepsleep( TIME_TO_SLEEP )
 
-#ifdef TINY_GSM_MODEM_SIM7600
-  // Configuration des broches pour modele original SIM7600
-  #define UART_BAUD 115200   // for modem only
-  #define PIN_RX 26
-  #define PIN_TX 27
-  #define MODEM_PWRKEY 4
-  #define MODEM_POWER 25
-  #include <XPowersLib.h>
-  #include <SoftwareSerial.h>
-#define RS232_BAUD 115200
-#define RS232_RX    18
-#define RS232_TX    5
-SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
-  #ifndef PMU_WIRE_PORT
-  #define PMU_WIRE_PORT   Wire
-  #endif
-
-  XPowersLibInterface *PMU = NULL;
-  const uint8_t i2c_sda = 21;
-  const uint8_t i2c_scl = 22;
-  const uint8_t PMU_IRQ = 35;
-  bool pmu_irq = false;
-#elif defined(TINY_GSM_MODEM_A7670)
   #define UART_BAUD 115200   // for modem only
   #define PIN_RX       27
   #define PIN_TX       26
@@ -104,12 +65,6 @@ SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
   #define MODEM_DTR      25
   #define BOARD_POWERON  12
   #define BAT_ADC_PIN 35
-    #include <SoftwareSerial.h>
-#define RS232_BAUD 115200
-#define RS232_RX    18
-#define RS232_TX    5
-SoftwareSerial RS232Serial(RS232_RX, RS232_TX);
-#endif
 
 float lastBatPercent = 0.0;
 float lastBatVoltage = 0.0;
@@ -126,8 +81,8 @@ HardwareSerial SerialAT(1);  // UART1 - Modem
 HardwareSerial GNSSSerial(2);      // UART2 - GNSS
 
 #define GNSSBAUD 460800
-#define GNSS_TX    32 //=> vers RX LG580P
-#define GNSS_RX    34 // => vers TX LG580P
+#define GNSS_TX    34 //=> vers RX LG580P
+#define GNSS_RX    32 // => vers TX LG580P
 
 // Define the serial console for debug prints, if needed
 #define TINY_GSM_DEBUG Serial
@@ -160,7 +115,6 @@ Preferences prefs;
 #define MODE_BT       1
 #define MODE_BLE      2
 #define MODE_TCP      3
-#define MODE_RS232    4
 #define PIN_MODE_0    14
 #define PIN_MODE_1    15
 #define PIN_MODE_2    23
@@ -250,17 +204,6 @@ WiFiClient tcpClient;
 unsigned long lastGgaTime = 0;
 const unsigned long ggaInterval = 10000; // 10 sec
 
-void readpmu()
-{
-  #ifdef TINY_GSM_MODEM_SIM7600
-         lastBatVoltage = PMU->getBattVoltage();
-         lastBatVoltage = lastBatVoltage /1000;
-  if (PMU->isBatteryConnect())
-    {
-       lastBatPercent = PMU->getBatteryPercent();
-    }
-    #endif
-}
 float readBatteryPercent() {
   #ifdef TINY_GSM_MODEM_A7670
     uint16_t adcRaw = analogRead(BAT_ADC_PIN);
@@ -549,10 +492,6 @@ void setupOutputMode() {
       {
         outputMode = MODE_TCP;
       }
-    else if (m0 && m1 && !m2) // 110
-      {
-        outputMode = MODE_RS232;
-      }
     else // Défaut
       {
         outputMode = MODE_UDP;
@@ -584,16 +523,6 @@ void setupBLE() {
   Serial.println("BLE UART prêt");
 }
 
-void setupRS232() {
-  RS232Serial.begin(RS232_BAUD);
-  delay(100);
-  Serial.println("RS232 initialisé sur GPIO " + String(RS232_RX) + "/" + String(RS232_TX) + " à " + String(RS232_BAUD) + " baud");
-  
-  // Message de bienvenue sur RS232
-  RS232Serial.println("ESP32 NTRIP-RS232 Ready");
-  RS232Serial.println("Firmware: " + String(__DATE__) + " " + String(__TIME__));
-}
-
 void sendOutput(const uint8_t* buf, size_t len) {
   if (outputMode == MODE_UDP) {
     udp.beginPacket(udpRemoteIp, udpRemotePort);
@@ -616,10 +545,6 @@ void sendOutput(const uint8_t* buf, size_t len) {
           tcpClient.write(buf, len);
         }
     }
-  else if (outputMode == MODE_RS232)
-      {  // NOUVEAU
-        RS232Serial.write(buf, len);
-      }
 }
 
 void initWifiUdpAuto() {
@@ -659,17 +584,7 @@ void initWifiUdpAuto() {
 
 void poweronmodem()
 {
-  #ifdef TINY_GSM_MODEM_SIM7600
-  // Sequence pour SIM7600
-  pinMode(MODEM_PWRKEY, OUTPUT);
-  pinMode(MODEM_POWER, OUTPUT);
-  digitalWrite(MODEM_POWER, HIGH);
-  delay(100);
-  digitalWrite(MODEM_PWRKEY, HIGH);
-  delay(500);
-  digitalWrite(MODEM_PWRKEY, LOW);
-  delay(5000);
-#elif defined(TINY_GSM_MODEM_A7670)
+
 // Sequence pour A7670G
   pinMode(BOARD_POWERON, OUTPUT);
   digitalWrite(BOARD_POWERON, HIGH);  
@@ -683,87 +598,9 @@ void poweronmodem()
   delay(1000);
   digitalWrite(MODEM_PWRKEY, HIGH);
   delay(5000);
-#else
-  #error "Aucun modele selectionne! Decommenter un #define MODEL_xxx"
-#endif
 }
 
-void pmu_setup()
-{
-  #ifdef TINY_GSM_MODEM_SIM7600
-    Wire.begin(i2c_sda, i2c_scl);
 
-    if (!PMU) {
-        PMU = new XPowersAXP2101(PMU_WIRE_PORT);
-        if (!PMU->init()) {
-            Serial.println("Warning: Failed to find AXP2101 power management");
-            delete PMU;
-            PMU = NULL;
-        } else {
-            Serial.println("AXP2101 PMU init succeeded, using AXP2101 PMU");
-
-            // Set the minimum common working voltage of the PMU VBUS input,
-            // below this value will turn off the PMU
-            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
-
-            // Set the maximum current of the PMU VBUS input,
-            // higher than this value will turn off the PMU
-            PMU->setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_2000MA);
-        }
-    }
-
-    while (!PMU) {
-        Serial.println("The address of the power management device was not found. The power communication of this board failed! Please check.");
-        delay(1000);
-    }
-
-    // Set VSY off voltage as 2600mV , Adjustment range 2600mV ~ 3300mV
-    PMU->setSysPowerDownVoltage(2600);
-
-    /*
-     * The charging indicator can be turned on or off
-     * * * */
-    PMU->setChargingLedMode(XPOWERS_CHG_LED_BLINK_1HZ);
-
-
-    pinMode(PMU_IRQ, INPUT_PULLUP);
-    attachInterrupt(PMU_IRQ, [] {
-        pmu_irq = true;
-    }, FALLING);
-
-if (PMU->getChipModel() == XPOWERS_AXP2101) {
-        //ESP32 VDD 3300mV ， protected esp32 power source
-        PMU->setProtectedChannel(XPOWERS_DCDC1);
-
-        //Unuse power channel
-        PMU->disablePowerOutput(XPOWERS_DCDC2);
-        PMU->disablePowerOutput(XPOWERS_DCDC3);
-        PMU->disablePowerOutput(XPOWERS_DCDC4);
-        PMU->disablePowerOutput(XPOWERS_DCDC5);
-        PMU->disablePowerOutput(XPOWERS_ALDO1);
-        PMU->disablePowerOutput(XPOWERS_ALDO4);
-        PMU->disablePowerOutput(XPOWERS_BLDO1);
-        PMU->disablePowerOutput(XPOWERS_BLDO2);
-        PMU->disablePowerOutput(XPOWERS_DLDO1);
-        PMU->disablePowerOutput(XPOWERS_DLDO2);
-        PMU->disablePowerOutput(XPOWERS_VBACKUP);
-    }
-
-    PMU->clearIrqStatus();
-
-    PMU->disableInterrupt(XPOWERS_ALL_INT);
-
-    PMU->enableInterrupt(XPOWERS_USB_INSERT_INT |
-                         XPOWERS_USB_REMOVE_INT |
-                         XPOWERS_BATTERY_INSERT_INT |
-                         XPOWERS_BATTERY_REMOVE_INT |
-                         XPOWERS_PWR_BTN_CLICK_INT |
-                         XPOWERS_PWR_BTN_LONGPRESSED_INT);
-
-    // Set the time of pressing the button to turn off
-    PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
-    #endif
-}
 //=-=-=-=-=-=-=-=-=-=-=-=-=
 void setup()
 {
@@ -790,17 +627,13 @@ void setup()
     Serial.println("Failed to restart modem, attempting to continue without restarting");
   }
   delay(1000);
-#ifdef TINY_GSM_MODEM_SIM7600
-pmu_setup();
-#elif defined(TINY_GSM_MODEM_A7670)
+
   Serial.printf("restart modem");
   if (!modem.restart()) {
     Serial.println("modem.restart() echoue");
     while (true);
   }
-#else
-  Serial.println("on continu le boot");
-#endif
+
 
   delay(1000);
   if (!modem.gprsConnect(webAPN.c_str(), webSIMUSER.c_str(), webSIMPASS.c_str())) {
@@ -877,12 +710,7 @@ pmu_setup();
           Serial.println("Serveur TCP démarré sur le port 2102");
         }
     }
-  else if (outputMode == MODE_RS232) {  // NOUVEAU
-    initWifiUdpAuto();
-    delay(2000);
-    setupRS232();
-    Serial.println("Mode selectionne: RS232 (PIN1=HIGH, PIN2=HIGH, PIN3=LOW)");
-  }
+
 
 if (outputMode != MODE_BT && outputMode != MODE_BLE)
   {
@@ -904,15 +732,12 @@ while (Serial.available()) // Empty the serial buffer
 void loop()
 {
   server.handleClient();
-    #ifdef TINY_GSM_MODEM_SIM7600
-    readpmu();
-  #elif defined(TINY_GSM_MODEM_A7670)
+
   static unsigned long lastBatRead = 0;
   if (millis() - lastBatRead > 5000) {
     readBatteryPercent();
     lastBatRead = millis();
   }
-#endif
   static bool ggaOk = false;
 
   // =-=-=-=-= GNSS READ STATE =-=-=-=-=
